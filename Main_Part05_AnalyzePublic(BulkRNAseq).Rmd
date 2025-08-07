@@ -1,0 +1,940 @@
+---
+title: "Main_Part04_20240423_AnalyzePublic(BilkRNAseq)"
+author: "Yusuke Naoi"
+date: "2024-04-23"
+output: html_document
+---
+
+#Descripton
+- In this file, we define final BCC/NEJM cohort for downstream analysis, which are 2 representative public cohort of DLBCL.
+- In "ShapingData_BCC.R" and "ShapingData_NEJM.R", we firstly extract protein-coding genes.
+- For normalization method for BCC cohort, we used edgeR instead of original vst (Ennishi D et al. JCO. 2019).
+-The count data of NEJM cohort is provided as post-TPM-normalized count (Schmitz R et al. NEJM. 2018).
+- scGC-cluster, which is a modified version of scCOO-cluster from Holmes AB et al, JEM. 2020.
+- LME cluster is from Kotolov N et al. Cancer Discovery. 2021.
+
+```{r}
+#Set Working Directory To Project Directory!!!
+cwd <- "path_to_project_directory"
+setwd(cwd)
+getwd()
+
+set.seed(2024)
+```
+
+#color palette
+```{r message=FALSE, warning=FALSE}
+color_HighLow <- c("#e41a1c","#0072b5")
+color_coo <- c("#078282", #DZsig-pos
+               "#339e66", #GCB
+               "#95DBe5" #ABC
+               )
+color_coo4 <- c("#078282", #DZsig-pos
+                "#339e66", #GCB
+                "#95DBe5", #ABC
+                "gray90" #UNC
+               ) 
+color_hans <- c("#339e66", #GCB
+                "#95DBe5" #NonGC
+                ) 
+color_mut2 <- c("gray80","gray30")
+color_mut6 <- c("gray80","gray70","gray60","gray50","gray40","gray30")
+color_pattern3 <- c("#7db46c", #Membranous
+                    "#e7ebe0", #Cytoplasmic
+                    "#abd6df" #Negative
+                    )
+color_lme <- c("#82b7ff", #GC-like
+               "#e5b200", #Mesenchymal
+               "#d39fff", #Inflammatory
+               "#ffa242" #Depleted 
+               )
+color_scGC <- c("#fedc97", #DZ-like
+                "#b5b682", #INT-like
+                "#7c9885", #LZ-like
+                "#28666e", #PBL-like
+                "#033f63" #PreM-like
+                )
+```
+
+# BCC: Prepare GEP data
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func05_GEP_BCC.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+Extract_CodingGenes()
+Normalize_GEP()
+```
+
+# BCC: Load GEP data
+```{r message=FALSE, warning=FALSE}
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/BCC_CodingGENE_NrmCount(edgeR).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- cnt.nrm[,c("Patient_ID", "CD79B")]
+cnt.nrm <- na.omit(cnt.nrm)
+print(dim(cnt.nrm))
+```
+
+# NEJM: Shaping data (with COO=UNC)
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func06_ShapingData_NEJM.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+ShapingData(exclude_UNC="No")
+```
+
+# NEJM: Shaping data (without COO=UNC)
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func06_ShapingData_NEJM.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+ShapingData(exclude_UNC="Yes")
+```
+
+# NEJM: Add scGC-cluster (with COO=UNC)
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func06_ShapingData_NEJM.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+scGCcluster()
+```
+
+# BCC: CD79B mRNA boxplot between CD79B H-score class
+```{r fig.height=4, fig.width=4, message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(rstatix);library(patchwork)
+
+# load Hscore data
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("High","Low"))
+
+# load GEP data
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/BCC_CodingGENE_NrmCount(edgeR).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- cnt.nrm[,c("Patient_ID", "CD79B")]
+cnt.nrm <- na.omit(cnt.nrm)
+print(dim(cnt.nrm))
+
+# combine Hscore and GEP data
+df <- left_join(df, cnt.nrm, by="Patient_ID")
+
+# boxplot (COO=ALL)
+xy <- reshape2::melt(df[,c("BCC_CD79b_Hscore_class", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+stat.test <- xy %>% wilcox_test(value_log2 ~ BCC_CD79b_Hscore_class) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 13)
+bxp <- ggboxplot(
+  xy, x = "BCC_CD79b_Hscore_class", y = "value_log2", fill = "BCC_CD79b_Hscore_class",
+  outlier.shape = NA, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("CD79B H-score class")+
+  labs(title = "BCC_ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_HighLow)
+g -> g.bcc.box.hclass
+```
+
+# Public (BulkRNAseq): boxplot of CD79B mRNA among DLBCL90_COO
+```{r fig.height=5, fig.width=6, message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(rstatix);library(patchwork)
+
+# load data (BCC)
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/BCC_CodingGENE_NrmCount(EdgeR).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+cat("\n---- BCC cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("BCC")
+hist(log2(df$CD79B), breaks = 100)
+df -> df.bcc
+
+# load data (NEJM)
+df <- read.csv("./saved/bulkRNAseq/NEJM_metadata_withUNC.csv")
+#df <- df[df$RCHOP_like_Chemo=="yes",]
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/NEJM_CodingGENE_NrmCount(TPM).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+cat("\n---- NEJM cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("NCI")
+hist(log2(df$CD79B), breaks = 100)
+df -> df.nejm
+
+# boxplot (BCC)
+xy <- reshape2::melt(df.bcc[,c("DLBCL90_Group_updated", "CD79B")])
+xy$value_log2 <- log2(xy$value)
+res.kruskal <- xy %>% kruskal_test(value_log2 ~ DLBCL90_Group_updated)
+stat.test <-  xy  %>% dunn_test(value_log2 ~ DLBCL90_Group_updated) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = c(12,13,0))
+bxp <- ggboxplot(
+  xy, x = "DLBCL90_Group_updated", 
+  y = "value_log2", 
+  fill = "DLBCL90_Group_updated",
+  ylim = c(4,13),
+  outlier.shape = T)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("DLBCL90 COO")+
+  labs(title = "BCC") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_coo)
+g -> g.bcc.box.coo
+
+
+# boxplot (NEJM)
+xy <- reshape2::melt(df.nejm[,c("DLBCL90_Group_updated", "CD79B")])
+xy$value_log2 <- log2(xy$value)
+res.kruskal <- xy %>% kruskal_test(value_log2 ~ DLBCL90_Group_updated)
+stat.test <-  xy  %>% dunn_test(value_log2 ~ DLBCL90_Group_updated) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = c(12,13,0))
+bxp <- ggboxplot(
+  xy, x = "DLBCL90_Group_updated", 
+  y = "value_log2", 
+  fill = "DLBCL90_Group_updated",
+  ylim = c(4,13),
+  outlier.shape = T)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("DLBCL90 COO")+
+  labs(title = "NEJM") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_coo)
+g -> g.nejm.box.coo
+```
+
+# BCC: boxplot of CD79B mRNA between CD79B Muation status
+```{r message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(rstatix);library(patchwork)
+
+# load data (BCC)
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated", "CD79B_M")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/BCC_CodingGENE_NrmCount(EdgeR).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated", "CD79B_M")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+cat("\n---- BCC cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("BCC")
+hist(log2(df$CD79B), breaks = 100)
+df$CD79B_M <- as.factor(df$CD79B_M)
+df -> df.bcc
+
+# load data (NEJM)
+df <- read.csv("./saved/bulkRNAseq/NEJM_metadata_withUNC.csv")
+#df <- df[df$RCHOP_like_Chemo=="yes",]
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated","CD79B_M")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/NEJM_CodingGENE_NrmCount(TPM).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated","CD79B_M")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+cat("\n---- NEJM cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("NCI")
+hist(log2(df$CD79B), breaks = 100)
+df$CD79B_M <- as.factor(df$CD79B_M)
+df -> df.nejm
+
+# boxplot (Cohort=BCC, COO=ALL)
+xy <- reshape2::melt(df.bcc[,c("CD79B_M", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+stat.test <- xy %>% wilcox_test(value_log2 ~ CD79B_M) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 13)
+bxp <- ggboxplot(
+  xy, x = "CD79B_M", y = "value_log2", fill = "CD79B_M",
+  outlier.shape = T, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("CD79B mutation status")+
+  labs(title = "BCC (COO=ALL)") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut2)
+g -> g.bcc.box.mut.all
+
+# boxplot (Cohort=NCI, COO=ALL)
+xy <- reshape2::melt(df.nejm[,c("CD79B_M", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+stat.test <- xy %>% wilcox_test(value_log2 ~ CD79B_M) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 13)
+bxp <- ggboxplot(
+  xy, x = "CD79B_M", y = "value_log2", fill = "CD79B_M",
+  outlier.shape = T, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("CD79B mutation status")+
+  labs(title = "NCI (COO=ALL)") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut2)
+g -> g.nejm.box.mut.all
+
+# boxplot (Cohort=BCC, COO=ABC)
+xy <- reshape2::melt(df.bcc[df.bcc$DLBCL90_Group_updated=="ABC",c("CD79B_M", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+stat.test <- xy %>% wilcox_test(value_log2 ~ CD79B_M) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 13)
+bxp <- ggboxplot(
+  xy, x = "CD79B_M", y = "value_log2", fill = "CD79B_M",
+  outlier.shape = T, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("CD79B mutation status")+
+  labs(title = "BCC (COO=ABC)") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut2)
+g -> g.bcc.box.mut.abc
+
+# boxplot (Cohort=NCI, COO=ABC)
+xy <- reshape2::melt(df.nejm[df.nejm$DLBCL90_Group_updated=="ABC",c("CD79B_M", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+stat.test <- xy %>% wilcox_test(value_log2 ~ CD79B_M) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 13)
+bxp <- ggboxplot(
+  xy, x = "CD79B_M", y = "value_log2", fill = "CD79B_M",
+  outlier.shape = T, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("CD79B mutation status")+
+  labs(title = "NCI (COO=ABC)") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut2)
+g -> g.nejm.box.mut.abc
+```
+
+# Public (BulkRNAseq): boxplot of CD79B mRNA among LymphGen (MCD vs Non-MCD)
+```{r message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(rstatix);library(patchwork)
+
+# load data (BCC)
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated", 
+                    "LymphGen_caption","LymphGen_orig","LymphGen_MCD_bin")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/BCC_CodingGENE_NrmCount(EdgeR).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated", 
+                    "LymphGen_caption","LymphGen_orig","LymphGen_MCD_bin")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+cat("\n---- BCC cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("BCC")
+hist(log2(df$CD79B), breaks = 100)
+df$LymphGen_MCD_bin <- factor(df$LymphGen_MCD_bin, levels = c("Non-MCD","MCD"))
+df -> df.bcc
+
+# load data (NEJM)
+df <- read.csv("./saved/bulkRNAseq/NEJM_metadata_withUNC.csv")
+#df <- df[df$RCHOP_like_Chemo=="yes",]
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated", 
+                    "LymphGen_caption","LymphGen_orig","LymphGen_MCD_bin")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/NEJM_CodingGENE_NrmCount(TPM).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated", 
+                    "LymphGen_caption","LymphGen_orig","LymphGen_MCD_bin")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+cat("\n---- NEJM cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("NCI")
+hist(log2(df$CD79B), breaks = 100)
+df$LymphGen_MCD_bin <- factor(df$LymphGen_MCD_bin, levels = c("Non-MCD","MCD"))
+df -> df.nejm
+
+# boxplot (Cohort=BCC, COO=ALL)
+xy <- reshape2::melt(df.bcc[,c("LymphGen_MCD_bin", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+stat.test <- xy %>% wilcox_test(value_log2 ~ LymphGen_MCD_bin) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 13)
+bxp <- ggboxplot(
+  xy, x = "LymphGen_MCD_bin", y = "value_log2", fill = "LymphGen_MCD_bin",
+  outlier.shape = T, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("LymphGen_binary")+
+  labs(title = "BCC (COO=ALL)") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut2)
+g -> g.bcc.box.lg2.all
+
+# boxplot (Cohort=NCI, COO=ALL)
+xy <- reshape2::melt(df.nejm[,c("LymphGen_MCD_bin", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+stat.test <- xy %>% wilcox_test(value_log2 ~ LymphGen_MCD_bin) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 13)
+bxp <- ggboxplot(
+  xy, x = "LymphGen_MCD_bin", y = "value_log2", fill = "LymphGen_MCD_bin",
+  outlier.shape = T, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("LymphGen_binary")+
+  labs(title = "NCI (COO=ALL)") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut2)
+g -> g.nejm.box.lg2.all
+```
+
+# Public (BulkRNAseq): oxplot of CD79B mRNA among LymphGen (primary 6 class)
+```{r message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(rstatix);library(patchwork)
+
+# load data (BCC)
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated", 
+                    "LymphGen_caption","LymphGen_orig","LymphGen_MCD_bin")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/BCC_CodingGENE_NrmCount(EdgeR).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated", 
+                    "LymphGen_caption","LymphGen_orig","LymphGen_MCD_bin")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+cat("\n---- BCC cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("BCC")
+hist(log2(df$CD79B), breaks = 100)
+df <- df[df$LymphGen_caption=="primary",]
+df$LymphGen_orig <- factor(df$LymphGen_orig, levels = c("EZB","ST2","BN2","A53","N1","MCD"))
+df -> df.bcc
+
+# load data (NEJM)
+df <- read.csv("./saved/bulkRNAseq/NEJM_metadata_withUNC.csv")
+#df <- df[df$RCHOP_like_Chemo=="yes",]
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated", 
+                    "LymphGen_caption","LymphGen_orig","LymphGen_MCD_bin")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/NEJM_CodingGENE_NrmCount(TPM).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated", 
+                    "LymphGen_caption","LymphGen_orig","LymphGen_MCD_bin")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+cat("\n---- NEJM cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("NCI")
+hist(log2(df$CD79B), breaks = 100)
+df <- df[df$LymphGen_caption=="primary",]
+df$LymphGen_orig <- factor(df$LymphGen_orig, levels = c("EZB","ST2","BN2","A53","N1","MCD"))
+df -> df.nejm
+
+
+# boxplot (Cohort=BCC, LymphGen <- primary 6 classes)
+xy <- reshape2::melt(df.bcc[,c("LymphGen_orig", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+res.kruskal <- xy %>% kruskal_test(value ~ LymphGen_orig)
+stat.test <-  xy  %>% dunn_test(value ~ LymphGen_orig) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = c(rep(0,3),13,rep(0,6),12.5,rep(0,3),12))
+bxp <- ggboxplot(
+  xy, x = "LymphGen_orig", y = "value_log2", fill = "LymphGen_orig",
+  outlier.shape = T, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("LymphGen_orig(primary 6 class)")+
+  labs(title = "BCC (COO=ALL)") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut6)
+g -> g.bcc.box.lg6.all
+
+# boxplot (Cohort=NCI, LymphGen <- primary 6 classes)
+xy <- reshape2::melt(df.nejm[,c("LymphGen_orig", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+res.kruskal <- xy %>% kruskal_test(value ~ LymphGen_orig)
+stat.test <-  xy  %>% dunn_test(value ~ LymphGen_orig) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = c(rep(0,3),13,rep(0,3),12.75,0,0,12.5,0,12.25,0,12))
+bxp <- ggboxplot(
+  xy, x = "LymphGen_orig", y = "value_log2", fill = "LymphGen_orig",
+  outlier.shape = T, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("LymphGen_orig(primary 6 class)")+
+  labs(title = "NCI (COO=ALL)") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut6)
+g -> g.nejm.box.lg6.all
+```
+
+
+# Public (BulkRNAseq): boxplot of CD79B mRNA among scGCcluster
+```{r fig.height=8, fig.width=6, message=FALSE, warning=FALSE}
+exst <- c("JEMsupp_scGC_Class", "JEMsupp_scGC_Score", "JEMsupp_scGC_Group", "JEMsupp_scGC_Class_Simple")
+
+# load data (BCC)
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/BCC_CodingGENE_NrmCount(EdgeR).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+scGC <- read.csv("./saved/bulkRNAseq/BCC_scGCcluster.csv", row.names = 1)
+df <- left_join(df, scGC[,c("Patient_ID",exst)], by = "Patient_ID")
+df <- na.omit(df)
+cat("\n---- BCC cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("BCC")
+hist(log2(df$CD79B), breaks = 100)
+df$JEMsupp_scGC_Class_Simple <- factor(df$JEMsupp_scGC_Class_Simple,
+                                       levels = c("DZ-like","INT-like","LZ-like","PBL-like","PreM-like"))
+df -> df.bcc
+
+# load data (NEJM)
+df <- read.csv("./saved/bulkRNAseq/NEJM_metadata_withUNC.csv")
+#df <- df[df$RCHOP_like_Chemo=="yes",]
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated", 
+                    "LymphGen_caption","LymphGen_orig","LymphGen_MCD_bin")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/NEJM_CodingGENE_NrmCount(TPM).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+scGC <- data.frame(data.table::fread("./saved/bulkRNAseq/NEJM_scGCcluster.csv"))
+df <- left_join(df, scGC[,c("Patient_ID",exst)], by = "Patient_ID")
+df <- na.omit(df)
+cat("\n---- NEJM cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("NCI")
+hist(log2(df$CD79B), breaks = 100)
+df$JEMsupp_scGC_Class_Simple <- factor(df$JEMsupp_scGC_Class_Simple,
+                                       levels = c("DZ-like","INT-like","LZ-like","PBL-like","PreM-like"))
+df -> df.nejm
+
+# boxplot (scGC class, Cohort=BCC, COO=ALL)
+xy <- reshape2::melt(df.bcc[,c("JEMsupp_scGC_Class_Simple", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+res.kruskal <- xy %>% kruskal_test(value ~ JEMsupp_scGC_Class_Simple)
+stat.test <-  xy  %>% dunn_test(value ~ JEMsupp_scGC_Class_Simple) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = c(0,12.5,12.75,13,11.75,12,12.25,0,0,0))
+bxp <- ggboxplot(
+  xy, x = "JEMsupp_scGC_Class_Simple", y = "value_log2", fill = "JEMsupp_scGC_Class_Simple",
+  outlier.shape = T, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = F),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("JEMsupp_scGC_Class_Simple")+
+  labs(title = "BCC (COO=ALL)") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_scGC)
+g -> g.bcc.box.scGC.all
+
+# boxplot (scGC class, Cohort=NCI, COO=ALL)
+xy <- reshape2::melt(df.nejm[,c("JEMsupp_scGC_Class_Simple", "CD79B")])
+xy <- na.omit(xy)
+xy$value_log2 <- log2(xy$value) 
+res.kruskal <- xy %>% kruskal_test(value ~ JEMsupp_scGC_Class_Simple)
+stat.test <-  xy  %>% dunn_test(value ~ JEMsupp_scGC_Class_Simple) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = c(0,12.5,12.75,13,11.75,12,12,250,11.5,0))
+bxp <- ggboxplot(
+  xy, x = "JEMsupp_scGC_Class_Simple", y = "value_log2", fill = "JEMsupp_scGC_Class_Simple",
+  outlier.shape = T, ylim=c(4,13)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = F),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B mRNA level (log2)")+
+  xlab("JEMsupp_scGC_Class_Simple")+
+  labs(title = "NCI (COO=ALL)") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_scGC)
+g -> g.nejm.box.scGC.all
+```
+
+# Public (BulkRNAseq): Chi-square test of LymGen and scGCcluster
+```{r fig.height=8, fig.width=6, message=FALSE, warning=FALSE}
+exst <- c("JEMsupp_scGC_Class", "JEMsupp_scGC_Score", "JEMsupp_scGC_Group", "JEMsupp_scGC_Class_Simple")
+
+# load data (BCC)
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df <- na.omit(df[,c("Patient_ID", "DLBCL90_Group_updated","LymphGen_caption","LymphGen_orig")])
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/BCC_CodingGENE_NrmCount(EdgeR).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- na.omit(cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df[,c("Patient_ID", "DLBCL90_Group_updated","LymphGen_caption","LymphGen_orig")], 
+                cnt.nrm[,c("Patient_ID", "CD79B")],
+                by="Patient_ID")
+scGC <- read.csv("./saved/bulkRNAseq/BCC_scGCcluster.csv", row.names = 1)
+df <- left_join(df, scGC[,c("Patient_ID",exst)], by = "Patient_ID")
+df <- na.omit(df)
+cat("\n---- BCC cohort has", 
+    paste0("n=", length(unique(df$Patient_ID))), 
+    "GEP data with sufficient metadata----\n")
+cat("\n---- exclude UNC now ----\n")
+df <- df[df$DLBCL90_Group_updated!="UNC", ]
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+df$Cohort <- rep("BCC")
+hist(log2(df$CD79B), breaks = 100)
+df$JEMsupp_scGC_Class_Simple <- factor(df$JEMsupp_scGC_Class_Simple,
+                                       levels = c("DZ-like","INT-like","LZ-like","PBL-like","PreM-like"))
+
+df <- df[df$LymphGen_caption=="primary",]
+df$LymphGen_orig <- factor(df$LymphGen_orig, levels = c("EZB","ST2","BN2","A53","N1","MCD"))
+df -> df.bcc
+
+print(table(df.bcc$JEMsupp_scGC_Class_Simple, df.bcc$LymphGen_orig) %>% chisq.test())
+print(table(df.bcc$JEMsupp_scGC_Class_Simple, df.bcc$LymphGen_orig) %>% chisq.test() %>% .[["stdres"]])
+```
+
+
+# Public (BulkRNAseq): patchwork (COO=ALL)
+```{r fig.height=12, fig.width=8, message=FALSE, warning=FALSE}
+library(patchwork)
+
+g0 <- g.bcc.box.hclass
+g1 <- ( (g0 | (g.bcc.box.coo+g.nejm.box.coo)) + plot_layout(widths=c(1,2)) )
+g2 <- ( (g.bcc.box.mut.all+g.nejm.box.mut.all) | (g.bcc.box.lg2.all+g.nejm.box.lg2.all) )
+g3 <- (g.bcc.box.scGC.all+g.nejm.box.scGC.all)
+
+g <- ( (g1/g2/g3) + plot_layout(heights=c(1,0.75,1)) )
+plot(g)
+
+ggsave("./saved/figs/bulkRNAseq/Fig4.pdf",
+       plot = g,
+       width = 8, height = 12)
+```
+
+# Public (BulkRNAseq): patchwork (LG6)
+```{r fig.height=6, fig.width=6, message=FALSE, warning=FALSE}
+library(patchwork)
+
+g <- ( (g.bcc.box.lg6.all+g.nejm.box.lg6.all) )
+
+print(g)
+
+ggsave("./saved/figs/bulkRNAseq/CD79B_mRNA_boxplots(LG6).pdf",
+       plot = g, 
+       width = 6, height = 4)
+```
+
+#Sessioninfo
+```{r message=FALSE, warning=FALSE}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

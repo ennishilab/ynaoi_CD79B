@@ -1,0 +1,149 @@
+---
+title: "Single Cell Analysis"
+author: "Yusuke Naoi"
+date: "2024-04-23"
+output: html_document
+---
+
+#Descripton
+- In this file, we analyze single-cell data using Seurat package (v5.0.1).
+- We performed CITEseq experiment on reactive lymph node(RLN) from non-malignant patients (n=2).
+- We also analyzed public datasets.
+
+#Set Working Directory To Project Directory!!!
+```{r message=FALSE, warning=FALSE}
+cwd <- "path_to_project_directory"
+setwd(cwd)
+getwd()
+
+set.seed(2024)
+```
+
+
+# Create Seurat Object
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func07_define_SingleCellData.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+CreateSeuratObj_citeRLN_OKU()
+```
+
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func07_define_SingleCellData.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+CreateSeuratObj_citeTonsil_NatBiotechnol2023()
+```
+
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func07_define_SingleCellData.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+CreateSeuratObj_citeLungLN_NatImmunol2023()
+```
+
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func07_define_SingleCellData.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+CreateSeuratObj_scRLN_JEM2020()
+```
+
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func07_define_SingleCellData.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+CreateSeuratObj_scRLN_SciImmunol2021()
+```
+
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func07_define_SingleCellData.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+CreateSeuratObj_scMixed_CancerCell2021()
+```
+
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func07_define_SingleCellData.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+CreateSeuratObj_scMixed_CancerDiscov2019()
+```
+
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func07_define_SingleCellData.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+CreateSeuratObj_scRLN_SciImmunol2022()
+```
+
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func07_define_SingleCellData.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+CreateSeuratObj_scMixed_NatCellBiol2020()
+```
+
+
+# Merge Seurat Object
+## citeRLN_OKU
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+.myfunc.env = new.env()
+sys.source( "./func/Func08_Preprocess_SingleCellData(OKU).R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+path = "./saved/scRNAseq/src/"
+MergeSingleCellData(path=path, mode="Healthy_OKU")
+```
+
+## Healthy_Public
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func09_Preprocess_SingleCellData(Public).R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+path = "./saved/scRNAseq/src/"
+MergeSingleCellData(path=path, mode="Healthy_Public")
+```
+
+#Sessioninfo
+```{r message=FALSE, warning=FALSE}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

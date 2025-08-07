@@ -1,0 +1,937 @@
+---
+title: "Main_Part02_20240422_AnalyzeOKU(Pattern)"
+author: "Yusuke Naoi"
+date: "2024-04-22"
+output: html_document
+---
+
+#Descripton
+- In this file, we analyze CD79B staining pattern.
+
+#Set Working Directory To Project Directory
+```{r}
+cwd <- "path_to_project_directory"
+setwd(cwd)
+getwd()
+
+set.seed(2024)
+```
+
+#color palette
+```{r message=FALSE, warning=FALSE}
+color_HighLow <- c("#e41a1c","#0072b5")
+color_coo <- c("#078282", #DZsig-pos
+               "#339e66", #GCB
+               "#95DBe5" #ABC
+               )
+color_hans <- c("#339e66", #GCB
+                "#95DBe5" #NonGC
+                ) 
+color_PosNeg <- c("#19a53a", #POS
+                  "#00299b" #NEG
+                  )
+color_pattern3 <- c("#7db46c", #Membranous
+                    "#e7ebe0", #Cytoplasmic
+                    "#abd6df" #Negative
+                    )
+```
+
+#Load function (define_cohort_OKU.R)
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func02_define_cohort_OKU.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+define_cohort()
+```
+
+#CD79B Pattern
+```{r fig.height=10, fig.width=8, message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(ggpubr)
+
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withoutUNC.csv")
+df$OKU_CD79b_Hscore_class <- factor(df$OKU_CD79b_Hscore_class, levels = c("Low","High"))
+
+#boxplot
+xy <- reshape2::melt(df[,c("OKU_CD79b_Pattern", "OKU_CD79b_Hscore")])
+xy$OKU_CD79b_Pattern <- factor(xy$OKU_CD79b_Pattern, levels = c("M","C","NEG"))
+res.kruskal <- xy %>% kruskal_test(value ~ OKU_CD79b_Pattern)
+stat.test <-  xy  %>% dunn_test(value ~ OKU_CD79b_Pattern) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = c(290,300,280))
+bxp <- ggboxplot(
+  xy, x = "OKU_CD79b_Pattern", y = "value", fill = "OKU_CD79b_Pattern",
+  outlier.shape = T, ylim=c(0,300)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79b_Hscore")+
+  xlab("CD79b_Pattern")+
+  labs(title = "ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_pattern3)
+g -> g.box
+
+#pie plot (DLBCL90)
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withoutUNC.csv")
+df$OKU_CD79b_Hscore_class <- factor(df$OKU_CD79b_Hscore_class, levels = c("Low","High"))
+
+foo <- df %>%
+    dplyr::group_by(OKU_CD79b_Hscore_class) %>%
+    dplyr::select(OKU_CD79b_Pattern) %>%
+    table %>%
+    as.data.frame() %>%
+    dplyr::group_by(OKU_CD79b_Hscore_class) 
+
+foo$OKU_CD79b_Pattern <- factor(foo$OKU_CD79b_Pattern, levels = c("M","C","NEG"))
+foo$OKU_CD79b_Hscore_class <- factor(foo$OKU_CD79b_Hscore_class, levels = c("High","Low"))
+
+foo <- foo %>%
+  dplyr::group_by(OKU_CD79b_Pattern) %>%
+  mutate(per=Freq/sum(Freq)*100)
+
+g <- foo %>%
+  ggplot(aes(x =  "", y = per, fill = OKU_CD79b_Hscore_class))+
+  geom_bar(stat = "identity", width=1) + 
+  coord_polar(theta = "y", start = 0)+
+  ylab("")+
+  xlab("OKU_CD79b_Pattern")+
+  facet_wrap(~OKU_CD79b_Pattern, ncol = 3) +
+  #labs(title = "CD79b pattern among DLBCL90 COO") +
+  geom_text(aes(label=paste0(per,"%")),position = position_stack(vjust=0.5))+
+  theme(
+    axis.title.x = element_text(size = 6, face = "bold"),
+    axis.text.x = element_text(size = 5, face = "bold"),
+    axis.title.y = element_text(size = 6, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    plot.title = element_text(size = 5, face = "bold"),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.text = element_text(size = 4.2, face = "bold"),
+    legend.title = element_text(size = 5, face = "bold"),
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.position = "top",
+    legend.key.size = unit(1,"mm"),
+    legend.box.background = element_rect(fill='transparent', colour = NA)
+  ) +
+  scale_fill_manual(values = color_HighLow)
+g -> g.pie
+
+g <- (g.box/g.pie)+plot_layout(heights = c(8,2))
+print(g)
+
+ggsave("./saved/figs/OKU/CD79B_Hscore_boxplot(CD79b_Pattern).pdf", plot = g, width = 4, height = 8)
+```
+
+# Pie chart (pattern among COO)
+```{r}
+# pie chart (pattern)
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withoutUNC.csv")
+df$OKU_CD79b_Hscore_class <- factor(df$OKU_CD79b_Hscore_class, levels = c("Low","High"))
+
+foo <- df %>%
+    dplyr::group_by(OKU_CD79b_Pattern) %>%
+    dplyr::select(DLBCL90) %>%
+    table %>%
+    as.data.frame() %>%
+    dplyr::group_by(OKU_CD79b_Pattern) 
+
+foo$OKU_CD79b_Pattern <- factor(foo$OKU_CD79b_Pattern, levels = c("M","C","NEG"))
+foo$DLBCL90 <- factor(foo$DLBCL90, levels = c("DZsig-pos","GCB","ABC"))
+
+foo <- foo %>%
+  dplyr::group_by(DLBCL90) %>%
+  mutate(per=Freq/sum(Freq)*100)
+
+g <- foo %>%
+  ggplot(aes(x =  "", y = per, fill = OKU_CD79b_Pattern))+
+  geom_bar(stat = "identity", width=1) + 
+  coord_polar(theta = "y", start = 0)+
+  ylab("")+
+  xlab("DLBCL90")+
+  facet_wrap(~DLBCL90, ncol = 1) +
+  labs(title = "CD79b pattern among DLBCL90 COO") +
+  geom_text(aes(label=paste0(per,"%")),position = position_stack(vjust=0.5))+
+  theme(
+    axis.title.x = element_text(size = 6, face = "bold"),
+    axis.text.x = element_text(size = 5, face = "bold"),
+    axis.title.y = element_text(size = 6, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    plot.title = element_text(size = 5, face = "bold"),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.text = element_text(size = 4.2, face = "bold"),
+    legend.title = element_text(size = 5, face = "bold"),
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.position = "top",
+    legend.key.size = unit(1,"mm"),
+    legend.box.background = element_rect(fill='transparent', colour = NA)
+  ) +
+  scale_fill_manual(values = color_pattern3)
+print(g)
+
+ggsave("./saved/figs/OKU/CD79B_Pattern_pie(DLBCL90_COO).pdf", plot = g, width = 2, height = 6)
+
+# pie chart (DLBCL90)
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withoutUNC.csv")
+df$OKU_CD79b_Hscore_class <- factor(df$OKU_CD79b_Hscore_class, levels = c("Low","High"))
+
+foo <- df %>%
+    dplyr::group_by(DLBCL90) %>%
+    dplyr::select(OKU_CD79b_Pattern) %>%
+    table %>%
+    as.data.frame() %>%
+    dplyr::group_by(DLBCL90) 
+
+foo$OKU_CD79b_Pattern <- factor(foo$OKU_CD79b_Pattern, levels = c("M","C","NEG"))
+foo$DLBCL90 <- factor(foo$DLBCL90, levels = c("DZsig-pos","GCB","ABC"))
+
+foo <- foo %>%
+  dplyr::group_by(OKU_CD79b_Pattern) %>%
+  mutate(per=Freq/sum(Freq)*100)
+
+g <- foo %>%
+  ggplot(aes(x =  "", y = per, fill = DLBCL90))+
+  geom_bar(stat = "identity", width=1) + 
+  coord_polar(theta = "y", start = 0)+
+  ylab("")+
+  xlab("OKU_CD79b_Pattern")+
+  facet_wrap(~OKU_CD79b_Pattern, ncol = 1) +
+  labs(title = "CD79b pattern among DLBCL90 COO") +
+  geom_text(aes(label=paste0(per,"%")),position = position_stack(vjust=0.5))+
+  theme(
+    axis.title.x = element_text(size = 6, face = "bold"),
+    axis.text.x = element_text(size = 5, face = "bold"),
+    axis.title.y = element_text(size = 6, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    plot.title = element_text(size = 5, face = "bold"),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.text = element_text(size = 4.2, face = "bold"),
+    legend.title = element_text(size = 5, face = "bold"),
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.position = "top",
+    legend.key.size = unit(1,"mm"),
+    legend.box.background = element_rect(fill='transparent', colour = NA)
+  ) +
+  scale_fill_manual(values = color_coo)
+print(g)
+
+ggsave("./saved/figs/OKU/DLBCL90_pie(CD79B_Pattern).pdf", plot = g, width = 2, height = 6)
+
+```
+
+# Fisher & Chi-square test (pattern and COO)
+```{r}
+library(dplyr)
+
+# pie chart (pattern)
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withoutUNC.csv")
+df$OKU_CD79b_Hscore_class <- factor(df$OKU_CD79b_Hscore_class, levels = c("Low","High"))
+
+print(table(df$DLBCL90, df$OKU_CD79b_Pattern))
+print(table(df$DLBCL90, df$OKU_CD79b_Pattern) %>% fisher.test())
+write.csv(table(df$DLBCL90, df$OKU_CD79b_Pattern),
+          "./saved/Scores/OKU_defined_cohort_withoutUNC_COO-Pattern_withoutNEG_Fisher.csv")
+
+print(table(df$DLBCL90, df$OKU_CD79b_Pattern_PosNeg))
+print(table(df$DLBCL90, df$OKU_CD79b_Pattern_PosNeg) %>% fisher.test())
+write.csv(table(df$DLBCL90, df$OKU_CD79b_Pattern_PosNeg),
+          "./saved/Scores/OKU_defined_cohort_withoutUNC_COO-Pattern(PosNeg)_withoutNEG_Fisher.csv")
+
+df <- df[df$OKU_CD79b_Pattern != "NEG", ]
+print(table(df$DLBCL90, df$OKU_CD79b_Pattern))
+print(table(df$DLBCL90, df$OKU_CD79b_Pattern) %>% chisq.test())
+write.csv(table(df$DLBCL90, df$OKU_CD79b_Pattern),
+          "./saved/Scores/OKU_defined_cohort_withoutUNC_COO-Pattern_withoutNEG_Chisq.csv")
+
+
+```
+
+# riverplot for DLBCL90 COO and CD79B staining pattern
+```{r message=FALSE, warning=FALSE}
+# library(ggsankey)
+# 
+# df <- read.csv("./saved/Scores/OKU_defined_cohort_withoutUNC.csv")
+# df$OKU_CD79b_Hscore_class <- factor(df$OKU_CD79b_Hscore_class, levels = c("Low","High"))
+# 
+# dim(df)
+# table(df$DLBCL90, df$OKU_CD79b_Hscore_class)
+# table(df$DLBCL90, df$OKU_CD79b_Pattern)
+# table(df$OKU_CD79b_Hscore_class, df$OKU_CD79b_Pattern)
+# table(df$OKU_CD79b_Pattern, df$OKU_CD79b_Pattern_PosNeg)
+# 
+# # draw sankey diagram
+# links <- df %>%
+#     dplyr::group_by(OKU_CD79b_Pattern) %>%
+#     dplyr::select(DLBCL90) %>%
+#     table %>%
+#     as.data.frame() %>%
+#     dplyr::group_by(OKU_CD79b_Pattern)
+# links$OKU_CD79b_Pattern <- factor(links$OKU_CD79b_Pattern, levels = rev(c("M","C","NEG")))
+# links$DLBCL90 <- factor(links$DLBCL90, levels = rev(c("DZsig-pos","GCB","ABC")))
+# 
+# sankey <- ggplot(data = links,
+#                  aes(axis1 = DLBCL90, 
+#                      axis2 = OKU_CD79b_Pattern,
+#                      y = Freq)) +
+#   scale_x_discrete(limits = c("DLBCL90", "OKU_CD79b_Pattern"), 
+#                    expand = c(.7, .01)
+#                    ) +
+#   geom_alluvium(aes(fill=DLBCL90), 
+#                 geom = "flow", 
+#                 lode.guidance = "forward",
+#                 width = .2) +
+#   geom_stratum(aes(fill=DLBCL90), width = .2) +
+#   geom_text(stat = "stratum", aes(label = after_stat(stratum))) +
+#   coord_flip()+
+#   scale_fill_manual(values = rev(color_coo)) +
+#   theme_void()
+# plot(sankey)
+# 
+# ggsave("./saved/figs/OKU/sankey(CD79B_Pattern).pdf", 
+#        plot = sankey, width = 6, height = 3)
+```
+
+# Survival Analysis (Pattern)
+```{r fig.height=12, fig.width=10, message=FALSE, warning=FALSE}
+library(survival);library(survminer)
+grid.draw.ggsurvplot <- function(x){
+      survminer:::print.ggsurvplot(x, newpage = FALSE)
+    }
+
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withUNC.csv")
+df <- df %>% dplyr::rename("class"="OKU_CD79b_Pattern_PosNeg")
+df$class <- factor(df$class, levels = c("POS","NEG"))
+
+# COO=ALL, OS
+fit <- survfit(Surv(OS,OS_01)~ class, data = df)
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "Pattern=ALL, COO=ALL",              
+                xlab="years",
+                ylab="OS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_PosNeg,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_OS(Pattern=ALL_COO=ALL).pdf", plot = g, width = 5, height = 6)
+
+# COO=ALL, PFS
+fit <- survfit(Surv(PFS,PFS_01)~ class, data = df)
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "Pattern=ALL, COO=ALL",              
+                xlab="years",
+                ylab="PFS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_PosNeg,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_PFS(Pattern=ALL_COO=ALL).pdf", plot = g, width = 5, height = 6)
+
+# COO=ABC, OS
+fit <- survfit(Surv(OS,OS_01)~ class, data = df[df$DLBCL90=="ABC",])
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "Pattern=ALL, COO=ABC",              
+                xlab="years",
+                ylab="OS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_PosNeg,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_OS(Pattern=ALL_COO=ABC).pdf", plot = g, width = 5, height = 6)
+
+# COO=ABC, PFS
+fit <- survfit(Surv(PFS,PFS_01)~ class, data = df[df$DLBCL90=="ABC",])
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "Pattern=ALL, COO=ABC",              
+                xlab="years",
+                ylab="PFS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_PosNeg,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_PFS(Pattern=ALL_COO=ABC).pdf", plot = g, width = 5, height = 6)
+
+# COO=non-ABC, OS
+fit <- survfit(Surv(OS,OS_01)~ class, data = df[df$DLBCL90!="ABC",])
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "Pattern=ALL, COO=non-ABC",              
+                xlab="years",
+                ylab="OS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_PosNeg,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_OS(Pattern=ALL_COO=non-ABC).pdf", plot = g, width = 5, height = 6)
+
+# COO=non-ABC, PFS
+fit <- survfit(Surv(PFS,PFS_01)~ class, data = df[df$DLBCL90!="ABC",])
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "Pattern=ALL, COO=non-ABC",              
+                xlab="years",
+                ylab="PFS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_PosNeg,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_PFS(Pattern=ALL_COO=non-ABC).pdf", plot = g, width = 5, height = 6)
+```
+
+# Survival Analysis (H-score class)
+```{r fig.height=12, fig.width=10, message=FALSE, warning=FALSE}
+library(survival);library(survminer)
+grid.draw.ggsurvplot <- function(x){
+      survminer:::print.ggsurvplot(x, newpage = FALSE)
+    }
+
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withUNC.csv")
+df <- df %>% dplyr::rename("class"="OKU_CD79b_Hscore_class")
+df$class <- factor(df$class, levels = c("High","Low"))
+
+# COO=ALL, OS
+fit <- survfit(Surv(OS,OS_01)~ class, data = df)
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "COO=ALL",              
+                xlab="years",
+                ylab="OS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_HighLow,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_OS(HscoreClass_COO=ALL).pdf", plot = g, width = 5, height = 6)
+
+# COO=ALL, PFS
+fit <- survfit(Surv(PFS,PFS_01)~ class, data = df)
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "COO=ALL",              
+                xlab="years",
+                ylab="PFS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_HighLow,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_PFS(HscoreClass_COO=ALL).pdf", plot = g, width = 5, height = 6)
+
+# COO=ABC, OS
+fit <- survfit(Surv(OS,OS_01)~ class, data = df[df$DLBCL90=="ABC",])
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "COO=ABC",              
+                xlab="years",
+                ylab="OS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_HighLow,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_OS(HscoreClass_COO=ABC).pdf", plot = g, width = 5, height = 6)
+
+# COO=ABC, PFS
+fit <- survfit(Surv(PFS,PFS_01)~ class, data = df[df$DLBCL90=="ABC",])
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "COO=ABC",              
+                xlab="years",
+                ylab="PFS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_HighLow,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_PFS(HscoreClass_COO=ABC).pdf", plot = g, width = 5, height = 6)
+
+# COO=non-ABC, OS
+fit <- survfit(Surv(OS,OS_01)~ class, data = df[df$DLBCL90!="ABC",])
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "COO=non-ABC",              
+                xlab="years",
+                ylab="OS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_HighLow,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_OS(HscoreClass_COO=non-ABC).pdf", plot = g, width = 5, height = 6)
+
+# COO=non-ABC, PFS
+fit <- survfit(Surv(PFS,PFS_01)~ class, data = df[df$DLBCL90!="ABC",])
+g <- ggsurvplot(fit, 
+                surv.scale = "percent", 
+                censor.shape = "|", 
+                legend.title = "",
+                title= "COO=non-ABC",              
+                xlab="years",
+                ylab="PFS", 
+                conf.int = FALSE, 
+                pval=TRUE, pval.method=TRUE,
+                break.x.by = 2.5,
+                palette = color_HighLow,
+                risk.table = "abs_pct",
+)
+print(g)
+
+ggsave("./saved/figs/OKU/Kaplan_PFS(HscoreClass_COO=non-ABC).pdf", plot = g, width = 5, height = 6)
+```
+
+# IPI-adjusted Survival Table (H-score calss, COO=ALL)
+```{r message=FALSE, warning=FALSE}
+library(gtsummary);library(flextable);library(stringr)
+library(survminer);library(survival);library(car)
+
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withoutUNC.csv")
+df$DLBCL90 <- factor(df$DLBCL90, levels = c("GCB","DZsig-pos","ABC"))
+df_cox <- df
+
+columnList <- c("DLBCL90", "IPIscore", "OKU_CD79b_Hscore_class")
+
+## OS univariate Cox regression
+uv_cox_tab <- df_cox %>%
+  dplyr::select(columnList, OS_01, OS) %>% 
+  tbl_uvregression(
+    method = coxph,                           
+    y = Surv(time = OS, event = OS_01),      
+    exponentiate = TRUE                     
+  )%>%
+  bold_labels() %>%
+  bold_p(t = 0.05) 
+uv_cox_tab -> uv_cox_all_os
+print(uv_cox_all_os)
+
+## OS multivariate Cox regression
+mv_cox <- coxph(formula = Surv(OS, OS_01) ~ 
+                  DLBCL90+IPIscore+OKU_CD79b_Hscore_class, 
+                data = df_cox)   
+
+### vif (ref: https://stackoverflow.com/questions/23518075/testing-multicollinearity-in-cox-proportional-hazards-using-r)
+cvif <- vif(mv_cox) #assumes testfit from :  lrm, ols, psm, cph, Rq, Glm, glm
+print(cvif)
+
+final_mv_cox <- mv_cox %>% step(direction = "forward", trace = FALSE)
+
+mv_cox_tab <- 
+  tbl_regression(final_mv_cox, exponentiate = TRUE)  %>%
+  bold_p(t = 0.05)
+print(mv_cox_tab)
+mv_cox_tab -> mv_cox_all_os
+
+## OS Combine tables
+gt_tbl <- tbl_merge(
+  tbls = list(uv_cox_all_os, mv_cox_all_os),                          
+  tab_spanner = c("**Univariate Cox (OS)**", "**Multivariable Cox (OS)**"))%>%
+  as_flex_table() %>%
+  save_as_docx(path = "./saved/figs/OKU/COX_OS_COO=ALL(HscoreClass).docx")
+
+## PFS univariate Cox regression
+uv_cox_tab <- df_cox %>%
+  dplyr::select(columnList, PFS_01, PFS) %>% 
+  tbl_uvregression(
+    method = coxph,                           
+    y = Surv(time = PFS, event = PFS_01),      
+    exponentiate = TRUE                     
+  )%>%
+  bold_labels() %>%
+  bold_p(t = 0.05) 
+uv_cox_tab -> uv_cox_all_pfs
+print(uv_cox_all_pfs)
+
+## OS multivariate Cox regression
+mv_cox <- coxph(formula = Surv(PFS, PFS_01) ~ 
+                  DLBCL90+IPIscore+OKU_CD79b_Hscore_class,  
+                data = df_cox)   
+
+### vif (ref: https://stackoverflow.com/questions/23518075/testing-multicollinearity-in-cox-proportional-hazards-using-r)
+cvif <- vif(mv_cox) #assumes testfit from :  lrm, ols, psm, cph, Rq, Glm, glm
+print(cvif)
+
+final_mv_cox <- mv_cox %>% step(direction = "forward", trace = FALSE)
+
+mv_cox_tab <- 
+  tbl_regression(final_mv_cox, exponentiate = TRUE)  %>%
+  bold_p(t = 0.05)
+print(mv_cox_tab)
+mv_cox_tab -> mv_cox_all_pfs
+
+## OS Combine tables
+gt_tbl <- tbl_merge(
+  tbls = list(uv_cox_all_pfs, mv_cox_all_pfs),                          
+  tab_spanner = c("**Univariate Cox (PFS)**", "**Multivariable Cox (PFS)**"))%>%
+  as_flex_table() %>%
+  save_as_docx(path = "./saved/figs/OKU/COX_PFS_COO=ALL(HscoreClass).docx")
+```
+
+#IPI-adjusted Survival Table (H-score calss, COO=ALL)
+```{r message=FALSE, warning=FALSE}
+library(gtsummary);library(flextable);library(stringr)
+library(survminer);library(survival);library(car)
+
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withoutUNC.csv")
+df$DLBCL90 <- factor(df$DLBCL90, levels = c("GCB","DZsig-pos","ABC"))
+df$OKU_CD79b_Pattern_PosNeg <- factor(df$OKU_CD79b_Pattern_PosNeg, levels = c("POS","NEG"))
+df_cox <- df
+
+columnList <- c("DLBCL90", "IPIscore", "OKU_CD79b_Pattern_PosNeg")
+
+## OS univariate Cox regression
+uv_cox_tab <- df_cox %>%
+  dplyr::select(columnList, OS_01, OS) %>% 
+  tbl_uvregression(
+    method = coxph,                           
+    y = Surv(time = OS, event = OS_01),      
+    exponentiate = TRUE                     
+  )%>%
+  bold_labels() %>%
+  bold_p(t = 0.05) 
+uv_cox_tab -> uv_cox_all_os
+print(uv_cox_all_os)
+
+## OS multivariate Cox regression
+mv_cox <- coxph(formula = Surv(OS, OS_01) ~ 
+                  DLBCL90+IPIscore+OKU_CD79b_Pattern_PosNeg, 
+                data = df_cox)   
+
+### vif (ref: https://stackoverflow.com/questions/23518075/testing-multicollinearity-in-cox-proportional-hazards-using-r)
+cvif <- vif(mv_cox) #assumes testfit from :  lrm, ols, psm, cph, Rq, Glm, glm
+print(cvif)
+
+final_mv_cox <- mv_cox %>% step(direction = "forward", trace = FALSE)
+
+mv_cox_tab <- 
+  tbl_regression(final_mv_cox, exponentiate = TRUE)  %>%
+  bold_p(t = 0.05)
+print(mv_cox_tab)
+mv_cox_tab -> mv_cox_all_os
+
+## OS Combine tables
+gt_tbl <- tbl_merge(
+  tbls = list(uv_cox_all_os, mv_cox_all_os),                          
+  tab_spanner = c("**Univariate Cox (OS)**", "**Multivariable Cox (OS)**"))%>%
+  as_flex_table() %>%
+  save_as_docx(path = "./saved/figs/OKU/COX_OS_COO=ALL(Pattern).docx")
+
+## PFS univariate Cox regression
+uv_cox_tab <- df_cox %>%
+  dplyr::select(columnList, PFS_01, PFS) %>% 
+  tbl_uvregression(
+    method = coxph,                           
+    y = Surv(time = PFS, event = PFS_01),      
+    exponentiate = TRUE                     
+  )%>%
+  bold_labels() %>%
+  bold_p(t = 0.05) 
+uv_cox_tab -> uv_cox_all_pfs
+print(uv_cox_all_pfs)
+
+## OS multivariate Cox regression
+mv_cox <- coxph(formula = Surv(PFS, PFS_01) ~ 
+                  DLBCL90+IPIscore+OKU_CD79b_Pattern_PosNeg,  
+                data = df_cox)   
+
+### vif (ref: https://stackoverflow.com/questions/23518075/testing-multicollinearity-in-cox-proportional-hazards-using-r)
+cvif <- vif(mv_cox) #assumes testfit from :  lrm, ols, psm, cph, Rq, Glm, glm
+print(cvif)
+
+final_mv_cox <- mv_cox %>% step(direction = "forward", trace = FALSE)
+
+mv_cox_tab <- 
+  tbl_regression(final_mv_cox, exponentiate = TRUE)  %>%
+  bold_p(t = 0.05)
+print(mv_cox_tab)
+mv_cox_tab -> mv_cox_all_pfs
+
+## OS Combine tables
+gt_tbl <- tbl_merge(
+  tbls = list(uv_cox_all_pfs, mv_cox_all_pfs),                          
+  tab_spanner = c("**Univariate Cox (PFS)**", "**Multivariable Cox (PFS)**"))%>%
+  as_flex_table() %>%
+  save_as_docx(path = "./saved/figs/OKU/COX_PFS_COO=ALL(Pattern).docx")
+```
+
+#IPI-adjusted Survival Table (H-score calss, COO=ABC)
+```{r message=FALSE, warning=FALSE}
+library(gtsummary);library(flextable);library(stringr)
+library(survminer);library(survival);library(car)
+
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withoutUNC.csv")
+df$DLBCL90 <- factor(df$DLBCL90, levels = c("GCB","DZsig-pos","ABC"))
+df_cox <- df[df$DLBCL90=="ABC", ]
+
+columnList <- c("IPIscore", "OKU_CD79b_Hscore_class")
+
+## OS univariate Cox regression
+uv_cox_tab <- df_cox %>%
+  dplyr::select(columnList, OS_01, OS) %>% 
+  tbl_uvregression(
+    method = coxph,                           
+    y = Surv(time = OS, event = OS_01),      
+    exponentiate = TRUE                     
+  )%>%
+  bold_labels() %>%
+  bold_p(t = 0.05) 
+uv_cox_tab -> uv_cox_all_os
+print(uv_cox_all_os)
+
+## OS multivariate Cox regression
+mv_cox <- coxph(formula = Surv(OS, OS_01) ~ 
+                  IPIscore+OKU_CD79b_Hscore_class, 
+                data = df_cox)   
+
+### vif (ref: https://stackoverflow.com/questions/23518075/testing-multicollinearity-in-cox-proportional-hazards-using-r)
+cvif <- vif(mv_cox) #assumes testfit from :  lrm, ols, psm, cph, Rq, Glm, glm
+print(cvif)
+
+final_mv_cox <- mv_cox %>% step(direction = "forward", trace = FALSE)
+
+mv_cox_tab <- 
+  tbl_regression(final_mv_cox, exponentiate = TRUE)  %>%
+  bold_p(t = 0.05)
+print(mv_cox_tab)
+mv_cox_tab -> mv_cox_all_os
+
+## OS Combine tables
+gt_tbl <- tbl_merge(
+  tbls = list(uv_cox_all_os, mv_cox_all_os),                          
+  tab_spanner = c("**Univariate Cox (OS)**", "**Multivariable Cox (OS)**"))%>%
+  as_flex_table() %>%
+  save_as_docx(path = "./saved/figs/OKU/COX_OS_COO=ABC(HscoreClass).docx")
+
+## PFS univariate Cox regression
+uv_cox_tab <- df_cox %>%
+  dplyr::select(columnList, PFS_01, PFS) %>% 
+  tbl_uvregression(
+    method = coxph,                           
+    y = Surv(time = PFS, event = PFS_01),      
+    exponentiate = TRUE                     
+  )%>%
+  bold_labels() %>%
+  bold_p(t = 0.05) 
+uv_cox_tab -> uv_cox_all_pfs
+print(uv_cox_all_pfs)
+
+## OS multivariate Cox regression
+mv_cox <- coxph(formula = Surv(PFS, PFS_01) ~ 
+                  IPIscore+OKU_CD79b_Hscore_class,  
+                data = df_cox)   
+
+### vif (ref: https://stackoverflow.com/questions/23518075/testing-multicollinearity-in-cox-proportional-hazards-using-r)
+cvif <- vif(mv_cox) #assumes testfit from :  lrm, ols, psm, cph, Rq, Glm, glm
+print(cvif) 
+
+final_mv_cox <- mv_cox %>% step(direction = "forward", trace = FALSE)
+
+mv_cox_tab <- 
+  tbl_regression(final_mv_cox, exponentiate = TRUE)  %>%
+  bold_p(t = 0.05)
+print(mv_cox_tab)
+mv_cox_tab -> mv_cox_all_pfs
+
+## OS Combine tables
+gt_tbl <- tbl_merge(
+  tbls = list(uv_cox_all_pfs, mv_cox_all_pfs),                          
+  tab_spanner = c("**Univariate Cox (PFS)**", "**Multivariable Cox (PFS)**"))%>%
+  as_flex_table() %>%
+  save_as_docx(path = "./saved/figs/OKU/COX_PFS_COO=ABC(HscoreClass).docx")
+```
+
+
+#IPI-adjusted Survival Table (Pattern, COO=ABC)
+```{r message=FALSE, warning=FALSE}
+library(gtsummary);library(flextable);library(stringr)
+library(survminer);library(survival);library(car)
+
+df <- read.csv("./saved/Scores/OKU_defined_cohort_withoutUNC.csv")
+df$DLBCL90 <- factor(df$DLBCL90, levels = c("GCB","DZsig-pos","ABC"))
+df$OKU_CD79b_Pattern_PosNeg <- factor(df$OKU_CD79b_Pattern_PosNeg, levels = c("POS","NEG"))
+df_cox <- df[df$DLBCL90=="ABC", ]
+
+columnList <- c("IPIscore", "OKU_CD79b_Pattern_PosNeg")
+
+## OS univariate Cox regression
+uv_cox_tab <- df_cox %>%
+  dplyr::select(columnList, OS_01, OS) %>% 
+  tbl_uvregression(
+    method = coxph,                           
+    y = Surv(time = OS, event = OS_01),      
+    exponentiate = TRUE                     
+  )%>%
+  bold_labels() %>%
+  bold_p(t = 0.05) 
+uv_cox_tab -> uv_cox_all_os
+print(uv_cox_all_os)
+
+## OS multivariate Cox regression
+mv_cox <- coxph(formula = Surv(OS, OS_01) ~ 
+                  IPIscore+OKU_CD79b_Pattern_PosNeg, 
+                data = df_cox)   
+
+### vif (ref: https://stackoverflow.com/questions/23518075/testing-multicollinearity-in-cox-proportional-hazards-using-r)
+cvif <- vif(mv_cox) #assumes testfit from :  lrm, ols, psm, cph, Rq, Glm, glm
+print(cvif)
+
+final_mv_cox <- mv_cox %>% step(direction = "forward", trace = FALSE)
+
+mv_cox_tab <- 
+  tbl_regression(final_mv_cox, exponentiate = TRUE)  %>%
+  bold_p(t = 0.05)
+print(mv_cox_tab)
+mv_cox_tab -> mv_cox_all_os
+
+## OS Combine tables
+gt_tbl <- tbl_merge(
+  tbls = list(uv_cox_all_os, mv_cox_all_os),                          
+  tab_spanner = c("**Univariate Cox (OS)**", "**Multivariable Cox (OS)**"))%>%
+  as_flex_table() %>%
+  save_as_docx(path = "./saved/figs/OKU/COX_OS_COO=ABC(Pattern).docx")
+
+## PFS univariate Cox regression
+uv_cox_tab <- df_cox %>%
+  dplyr::select(columnList, PFS_01, PFS) %>% 
+  tbl_uvregression(
+    method = coxph,                           
+    y = Surv(time = PFS, event = PFS_01),      
+    exponentiate = TRUE                     
+  )%>%
+  bold_labels() %>%
+  bold_p(t = 0.05) 
+uv_cox_tab -> uv_cox_all_pfs
+print(uv_cox_all_pfs)
+
+## OS multivariate Cox regression
+mv_cox <- coxph(formula = Surv(PFS, PFS_01) ~ 
+                  IPIscore+OKU_CD79b_Pattern_PosNeg,  
+                data = df_cox)   
+
+### vif (ref: https://stackoverflow.com/questions/23518075/testing-multicollinearity-in-cox-proportional-hazards-using-r)
+cvif <- vif(mv_cox) #assumes testfit from :  lrm, ols, psm, cph, Rq, Glm, glm
+print(cvif)
+
+final_mv_cox <- mv_cox %>% step(direction = "forward", trace = FALSE)
+
+mv_cox_tab <- 
+  tbl_regression(final_mv_cox, exponentiate = TRUE)  %>%
+  bold_p(t = 0.05)
+print(mv_cox_tab)
+mv_cox_tab -> mv_cox_all_pfs
+
+## OS Combine tables
+gt_tbl <- tbl_merge(
+  tbls = list(uv_cox_all_pfs, mv_cox_all_pfs),                          
+  tab_spanner = c("**Univariate Cox (PFS)**", "**Multivariable Cox (PFS)**"))%>%
+  as_flex_table() %>%
+  save_as_docx(path = "./saved/figs/OKU/COX_PFS_COO=ABC(Pattern).docx")
+```
+
+#Sessioninfo
+```{r message=FALSE, warning=FALSE}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

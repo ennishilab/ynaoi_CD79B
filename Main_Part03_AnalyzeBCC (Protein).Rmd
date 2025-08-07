@@ -1,0 +1,898 @@
+---
+title: "Main_Part03_20240422_AnalyzeBCC"
+author: "Yusuke Naoi"
+date: "2024-04-22"
+output: html_document
+---
+
+#Descripton
+- In this file, we define final BCC cohort for downstream analysis.
+- In "ShapingData_BCC.R", we firstly extract protein-coding genes.
+- For normalization method for bulkRNAseq, we used edgeR instead of original vst (Ennishi D et al. JCO. 2019).
+- scGC-cluster, which is a modified version of scCOO-cluster from Holmes AB et al, JEM. 2020.
+- LME cluster is from Kotolov N et al. Cancer Discovery. 2021.
+
+```{r}
+#Set Working Directory To Project Directory!!!
+cwd <- "path_to_project_directory"
+setwd(cwd)
+getwd()
+
+set.seed(2024)
+```
+
+
+#color palette
+```{r message=FALSE, warning=FALSE}
+color_HighLow <- c("#e41a1c","#0072b5")
+color_coo <- c("#078282", #DZsig-pos
+               "#339e66", #GCB
+               "#95DBe5" #ABC
+               )
+color_coo4 <- c("#078282", #DZsig-pos
+                "#339e66", #GCB
+                "#95DBe5", #ABC
+                "gray90" #UNC
+               ) 
+color_hans <- c("#339e66", #GCB
+                "#95DBe5" #NonGC
+                ) 
+color_mut2 <- c("gray80","gray30")
+color_mut6 <- c("gray80","gray70","gray60","gray50","gray40","gray30")
+color_pattern3 <- c("#7db46c", #Membranous
+                    "#e7ebe0", #Cytoplasmic
+                    "#abd6df" #Negative
+                    )
+color_lme <- c("#82b7ff", #GC-like
+               "#e5b200", #Mesenchymal
+               "#d39fff", #Inflammatory
+               "#ffa242" #Depleted 
+               )
+```
+
+#BCC extract coding genes
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func03_ShapingData_BCC.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+Extract_CodingGenes()
+```
+
+#BCC_defined_cohort_withUNC
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func04_define_cohort_BCC.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+define_cohort(exclude_UNC="No")
+```
+
+#BCC_defined_cohort_withoutUNC
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func04_define_cohort_BCC.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+define_cohort(exclude_UNC="Yes")
+```
+
+# boxplot of CD79B Hscore among DLBCL90_COO
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr)
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withoutUNC.csv")
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+res <- summary(df$BCC_CD79b_Hscore)
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+# boxplot
+xy <- reshape2::melt(df[,c("DLBCL90_Group_updated", "BCC_CD79b_Hscore")])
+res.kruskal <- xy %>% kruskal_test(value ~ DLBCL90_Group_updated)
+stat.test <-  xy  %>% dunn_test(value ~ DLBCL90_Group_updated) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = c(280,300,260))
+bxp <- ggboxplot(
+  xy, x = "DLBCL90_Group_updated", y = "value", fill = "DLBCL90_Group_updated",
+  outlier.shape = T, ylim=c(0,320)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       #caption = get_pwc_label(stat.test)
+       )+
+  ylab("CD79B H-score")+
+  xlab("COO (DLBCL90)")+
+  labs(title = "ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_coo)
+print(g)
+
+g -> g.box.coo
+
+#ggsave("./saved/figs/BCC/CD79B_Hscore_boxplot(DLBCL90_COO).pdf", plot = g, width = 4, height = 5)
+```
+
+#pie chart of CD79B Hscore class among DLBCL90_COO
+```{r message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr)
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withoutUNC.csv")
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+res <- summary(df$BCC_CD79b_Hscore)
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+foo <- df %>%
+    dplyr::group_by(BCC_CD79b_Hscore_class) %>%
+    dplyr::select(DLBCL90_Group_updated) %>%
+    table %>%
+    as.data.frame() %>%
+    dplyr::group_by(BCC_CD79b_Hscore_class) 
+
+foo$BCC_CD79b_Hscore_class <- factor(foo$BCC_CD79b_Hscore_class, levels = c("High","Low"))
+foo$DLBCL90_Group_updated <- factor(foo$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+
+foo <- foo %>%
+  dplyr::group_by(DLBCL90_Group_updated) %>%
+  mutate(per=round(Freq/sum(Freq)*100))
+
+g <- foo %>%
+  ggplot(aes(x =  "", y = per, fill = BCC_CD79b_Hscore_class))+
+  geom_bar(stat = "identity", width=1) + 
+  coord_polar(theta = "y", start = 0)+
+  #ylab("")+
+  #xlab("DLBCL90_Group_updated")+
+  facet_wrap(~DLBCL90_Group_updated) +
+  #labs(title = "CD79b_Hscore_class among DLBCL90_Group_updated COO (ALL)") +
+  #geom_text(aes(label=paste0(per,"%")),position = position_stack(vjust=0.5))+
+  theme(
+    axis.title.x = element_text(size = 6, face = "bold"),
+    axis.text.x = element_text(size = 5, face = "bold"),
+    axis.title.y = element_text(size = 6, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    plot.title = element_text(size = 5, face = "bold"),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.text = element_text(size = 4.2, face = "bold"),
+    legend.title = element_text(size = 5, face = "bold"),
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.position = "top",
+    legend.key.size = unit(1,"mm"),
+    legend.box.background = element_rect(fill='transparent', colour = NA)
+  ) +
+  scale_fill_manual(values = color_HighLow)
+print(g)
+g -> g.pie.coo
+
+#ggsave("./saved/figs/BCC/CD79B_Hscore_pie(DLBCL90_Group_updated_COO).pdf", plot = g, width = 4.5, height = 3)
+```
+
+# boxplot of CD79B Hscore among Hans_COO
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr)
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+# boxplot
+xy <- reshape2::melt(df[,c("Hans_COO", "BCC_CD79b_Hscore")])
+xy <- na.omit(xy)
+stat.test <- xy %>% wilcox_test(value ~ Hans_COO) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 300)
+bxp <- ggboxplot(
+  xy, x = "Hans_COO", y = "value", fill = "Hans_COO",
+  outlier.shape = T, ylim=c(0,320)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       #caption = get_pwc_label(stat.test)
+       )+
+  ylab("CD79B H-score")+
+  xlab("COO(Hans)")+
+  labs(title = "ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_hans)
+print(g)
+g -> g.box.hans
+
+#ggsave("./saved/figs/BCC/CD79B_Hscore_boxplot(Hans_COO).pdf", plot = g, width = 4, height = 5)
+```
+#pie chart of CD79B Hscore class among Hans0_COO
+```{r message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr)
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withoutUNC.csv")
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+res <- summary(df$BCC_CD79b_Hscore)
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+foo <- df %>%
+    dplyr::group_by(BCC_CD79b_Hscore_class) %>%
+    dplyr::select(Hans_COO) %>%
+    table %>%
+    as.data.frame() %>%
+    dplyr::group_by(BCC_CD79b_Hscore_class) 
+
+foo$BCC_CD79b_Hscore_class <- factor(foo$BCC_CD79b_Hscore_class, levels = c("High","Low"))
+foo$Hans_COO <- factor(foo$Hans_COO, levels = c("GCB","Non-GC"))
+
+foo <- foo %>%
+  dplyr::group_by(Hans_COO) %>%
+  mutate(per=round(Freq/sum(Freq)*100))
+
+g <- foo %>%
+  ggplot(aes(x =  "", y = per, fill = BCC_CD79b_Hscore_class))+
+  geom_bar(stat = "identity", width=1) + 
+  coord_polar(theta = "y", start = 0)+
+  #ylab("")+
+  #xlab("DLBCL90_Group_updated")+
+  facet_wrap(~Hans_COO) +
+  #labs(title = "CD79b_Hscore_class among DLBCL90_Group_updated COO (ALL)") +
+  #geom_text(aes(label=paste0(per,"%")),position = position_stack(vjust=0.5))+
+  theme(
+    axis.title.x = element_text(size = 6, face = "bold"),
+    axis.text.x = element_text(size = 5, face = "bold"),
+    axis.title.y = element_text(size = 6, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    plot.title = element_text(size = 5, face = "bold"),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.text = element_text(size = 4.2, face = "bold"),
+    legend.title = element_text(size = 5, face = "bold"),
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.position = "top",
+    legend.key.size = unit(1,"mm"),
+    legend.box.background = element_rect(fill='transparent', colour = NA)
+  ) +
+  scale_fill_manual(values = color_HighLow)
+print(g)
+g -> g.pie.hans
+
+#ggsave("./saved/figs/BCC/CD79B_Hscore_pie(DLBCL90_Group_updated_COO).pdf", plot = g, width = 4.5, height = 3)
+```
+
+# Chi-square test of CD79B Hscore between mutation
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC","UNC"))
+res <- summary(df$BCC_CD79b_Hscore)
+df$CD79B_M <- as.factor(df$CD79B_M)
+df$LymphGen_MCD_bin <- factor(df$LymphGen_MCD_bin, levels = c("Non-MCD","MCD"))
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+# entire cohort
+print(table(df$BCC_CD79b_Hscore_class, df$CD79B_M) %>% chisq.test())
+
+print(table(df$BCC_CD79b_Hscore_class, df$CD79B_M) %>% chisq.test() %>% .[["stdres"]])
+
+# entire cohort
+df.abc <- df[df$DLBCL90_Group_updated=="ABC", ]
+print(table(df.abc$BCC_CD79b_Hscore_class, df.abc$CD79B_M) %>% chisq.test())
+
+print(table(df.abc$BCC_CD79b_Hscore_class, df.abc$CD79B_M) %>% chisq.test() %>% .[["stdres"]])
+```
+
+# Chi-square test of CD79B Hscore among LymphGen subtypes
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC","UNC"))
+res <- summary(df$BCC_CD79b_Hscore)
+df$CD79B_M <- as.factor(df$CD79B_M)
+df$LymphGen_MCD_bin <- factor(df$LymphGen_MCD_bin, levels = c("Non-MCD","MCD"))
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+# entire cohort
+print(table(df$BCC_CD79b_Hscore_class, df$LymphGen_MCD_bin)  %>% fisher.test())
+
+write.csv(table(df$BCC_CD79b_Hscore_class, df$LymphGen_MCD_bin),
+          "./saved/Scores/BCC_defined_cohort(all)_withUNC_CS79BHighLow-LymphGen(bin)_Fisher.csv")
+
+# entire cohort
+df.abc <- df[df$DLBCL90_Group_updated=="ABC", ]
+print(table(df.abc$BCC_CD79b_Hscore_class, df.abc$LymphGen_MCD_bin) %>% fisher.test())
+
+write.csv(table(df.abc$BCC_CD79b_Hscore_class, df.abc$LymphGen_MCD_bin),
+          "./saved/Scores/BCC_defined_cohort(ABC)_withUNC_CS79BHighLow-LymphGen(bin)_Fisher.csv")
+```
+
+
+# boxplot of CD79B Hscore between mutation & among LymphGen subtypes (entire cohort)
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(patchwork)
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC","UNC"))
+res <- summary(df$BCC_CD79b_Hscore)
+df$CD79B_M <- as.factor(df$CD79B_M)
+df$LymphGen_MCD_bin <- factor(df$LymphGen_MCD_bin, levels = c("Non-MCD","MCD"))
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+# boxplot CD79B mutation +/- (entire cohort)
+xy <- reshape2::melt(df[,c("CD79B_M", "BCC_CD79b_Hscore")])
+xy <- na.omit(xy)
+stat.test <- xy %>% wilcox_test(value ~ CD79B_M) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 300)
+bxp <- ggboxplot(
+  xy, x = "CD79B_M", y = "value", fill = "CD79B_M",
+  outlier.shape = T, ylim=c(0,320)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       #caption = get_pwc_label(stat.test)
+       )+
+  ylab("CD79B H-score")+
+  xlab("CD79B Mutation")+
+  labs(title = "ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut2)
+g -> g.mut.all
+
+# boxplot lymphgen MCD vs NonMCD (entire cohort)
+xy <- reshape2::melt(df[,c("LymphGen_MCD_bin", "BCC_CD79b_Hscore")])
+xy <- na.omit(xy)
+stat.test <- xy %>% wilcox_test(value ~ LymphGen_MCD_bin) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 300)
+bxp <- ggboxplot(
+  xy, x = "LymphGen_MCD_bin", y = "value", fill = "LymphGen_MCD_bin",
+  outlier.shape = T, ylim=c(0,320)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       #caption = get_pwc_label(stat.test)
+       )+
+  ylab("CD79B H-score")+
+  xlab("LymphGen")+
+  labs(title = "ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut2)
+g -> g.LG2.all
+```
+
+# boxplot of CD79B Hscore between mutation & among LymphGen subtypes (only ABC)
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(patchwork);library(rstatix);library(ggpubr)
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC","UNC"))
+res <- summary(df$BCC_CD79b_Hscore)
+df$CD79B_M <- as.factor(df$CD79B_M)
+df$LymphGen_MCD_bin <- factor(df$LymphGen_MCD_bin, levels = c("Non-MCD","MCD"))
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+df <- df[df$DLBCL90_Group_updated=="ABC", ]
+
+# boxplot CD79B mutation +/- 
+xy <- reshape2::melt(df[,c("CD79B_M", "BCC_CD79b_Hscore")])
+xy <- na.omit(xy)
+stat.test <- xy %>% wilcox_test(value ~ CD79B_M) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 300)
+bxp <- ggboxplot(
+  xy, x = "CD79B_M", y = "value", fill = "CD79B_M",
+  outlier.shape = T, ylim=c(0,320)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       #caption = get_pwc_label(stat.test)
+       )+
+  ylab("CD79B H-score")+
+  xlab("CD79B Mutation")+
+  labs(title = "ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut2)
+g -> g.mut.abc
+
+# boxplot lymphgen MCD vs NonMCD
+xy <- reshape2::melt(df[,c("LymphGen_MCD_bin", "BCC_CD79b_Hscore")])
+xy <- na.omit(xy)
+stat.test <- xy %>% wilcox_test(value ~ LymphGen_MCD_bin) %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 300)
+bxp <- ggboxplot(
+  xy, x = "LymphGen_MCD_bin", y = "value", fill = "LymphGen_MCD_bin",
+  outlier.shape = T, ylim=c(0,320)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE),
+       #caption = get_pwc_label(stat.test)
+       )+
+  ylab("CD79B H-score")+
+  xlab("LymphGen")+
+  labs(title = "ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut2)
+g -> g.LG2.abc
+```
+
+# patchwork
+```{r fig.height=5, fig.width=10, message=FALSE, warning=FALSE}
+g1 <- (g.box.coo/g.pie.coo)+plot_layout(heights=c(9,1))
+g2 <- (g.box.hans/g.pie.hans)+plot_layout(heights=c(9,1))
+g3 <- ( (g.mut.all|g.LG2.all) / (g.mut.abc|g.LG2.abc) )
+
+g.01 <- ((g1|g2)|g3)+plot_layout(widths=c(6,4.5,8))
+print(g.01)
+#ggsave("./saved/figs/BCC/CD79B_Hscore_boxplot(mut1).pdf", plot = g, width = 10, height = 5)
+```
+
+# boxplot of CD79B Hscore among LymphGen subtypes (primary 6 clusters)
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(patchwork)
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC","UNC"))
+res <- summary(df$BCC_CD79b_Hscore)
+df$CD79B_M <- as.factor(df$CD79B_M)
+df$LymphGen_MCD_bin <- factor(df$LymphGen_MCD_bin, levels = c("Non-MCD","MCD"))
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+# boxplot LymphGen 6 primary subtypes
+xy <- reshape2::melt(df[df$LymphGen_caption == "primary",
+                        c("LymphGen_orig", "BCC_CD79b_Hscore")])
+xy <- na.omit(xy)
+xy$LymphGen_orig <- factor(xy$LymphGen_orig, 
+                           levels = c("EZB","ST2","BN2","A53","N1","MCD"))
+res.kruskal <- xy %>% kruskal_test(value ~ LymphGen_orig)
+stat.test <-  xy  %>% dunn_test(value ~ LymphGen_orig) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = c(rep(0,4),330,rep(0,3),320,rep(0,2),310,0,300,0))
+bxp <- ggboxplot(
+  xy, x = "LymphGen_orig", y = "value", fill = "LymphGen_orig",
+  outlier.shape = T, ylim=c(0,330)
+)
+
+g <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       #caption = get_pwc_label(stat.test)
+       )+
+  ylab("CD79B H-score")+
+  xlab("LymphGen (primary)")+
+  labs(title = "ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_mut6)
+g -> g.LG6
+
+# barplot
+foo <- df[df$LymphGen_caption == "primary",] %>%
+    dplyr::group_by(DLBCL90_Group_updated) %>%
+    dplyr::select(LymphGen_orig) %>%
+    table %>%
+    as.data.frame() %>%
+    dplyr::group_by(DLBCL90_Group_updated)
+
+foo$DLBCL90_Group_updated <- factor(foo$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC","UNC"))
+foo$LymphGen_orig <- factor(foo$LymphGen_orig, levels = c("EZB","ST2","BN2","A53","N1","MCD"))
+
+foo <- foo %>%
+  dplyr::group_by(LymphGen_orig) %>%
+  mutate(per=round(Freq/sum(Freq)*100))
+
+g <- foo %>%
+  ggplot(aes(x =  "", y = per, fill = DLBCL90_Group_updated))+
+  geom_bar(aes(x = LymphGen_orig), stat = "identity", position = "stack") +
+  ylab("")+
+  xlab("LymphGen")+
+  labs(title = "DLBCL90 among LymphGen") +
+  theme(
+    axis.title.x = element_text(size = 6, face = "bold"),
+    axis.text.x = element_text(size = 5, face = "bold"),
+    axis.title.y = element_text(size = 6, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    plot.title = element_text(size = 5, face = "bold"),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'),
+    plot.background = element_rect(fill='transparent', color=NA),
+    legend.text = element_text(size = 4.2, face = "bold"),
+    legend.title = element_text(size = 5, face = "bold"),
+    legend.background = element_rect(fill='transparent', colour = NA),
+    legend.position = "top",
+    legend.key.size = unit(1,"mm"),
+    legend.box.background = element_rect(fill='transparent', colour = NA)
+  ) +
+  scale_fill_manual(values = color_coo4)
+g -> g.bar
+
+g <- (g.LG6/g.bar) + plot_layout(heights = c(8,2))
+print(g)
+
+ggsave("./saved/figs/BCC/CD79B_Hscore_LymphGen6.pdf",
+       plot = g, width = 4.5, height = 6)
+```
+
+# Prepare GEP data
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func05_GEP_BCC.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+Extract_CodingGenes()
+Normalize_GEP()
+```
+
+# Load GEP data
+```{r message=FALSE, warning=FALSE}
+cnt.nrm <- data.frame(data.table::fread("./saved/bulkRNAseq/BCC_CodingGENE_NrmCount(edgeR).csv"))
+colnames(cnt.nrm)[1] <- "Patient_ID"
+cnt.nrm <- cnt.nrm[,c("Patient_ID", "CD79B")]
+cnt.nrm <- na.omit(cnt.nrm)
+print(dim(cnt.nrm))
+```
+
+#LME
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func03_ShapingData_BCC.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+LME()
+```
+
+# boxplot of CD79B H-score among LME subtypes
+```{r fig.height=5, fig.width=3, message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(rstatix);library(ggpubr);library(patchwork)
+
+lme <- read.csv("./saved/bulkRNAseq/BCC_LME.csv", row.names = 1)
+#cnt.nrm <- read.csv("./saved/bulkRNAseq/BCC_CodingGENE_NrmCount(edgeR).csv")
+#colnames(cnt.nrm)[1] <- "Patient_ID"
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+#df$DLBCL90_Group_updated <- factor(df$DLBCL90_Group_updated, levels = c("DZsig-pos","GCB","ABC"))
+res <- summary(df$BCC_CD79b_Hscore)
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+#df <- left_join(df, cnt.nrm[,c("Patient_ID", "CD79B")])
+df <- left_join(df, lme, by = "Patient_ID")
+
+# boxplot (COO=ALL)
+xy <- reshape2::melt(df[,c("LME", "BCC_CD79b_Hscore")])
+xy <- na.omit(xy)
+xy$LME <- factor(xy$LME, levels = c("Mesenchymal","Depleted","Inflammatory","GC-like"))
+color_lme <- c("#e5b200", #Mesenchymal
+               "#ffa242", #Depleted 
+               "#d39fff", #Inflammatory
+               "#82b7ff" #GC-like
+               )
+
+res.kruskal <- xy %>% kruskal_test(value ~ LME)
+stat.test <-  xy  %>% dunn_test(value ~ LME) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = c(0,290,300,270,280,0))
+bxp <- ggboxplot(
+  xy, x = "LME", 
+  y = "value", 
+  fill = "LME",
+  outlier.shape = T)
+
+g1 <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B H-score")+
+  xlab("COO")+
+  labs(title = "ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_lme)
+
+# pie chart
+foo <- df %>%
+    dplyr::group_by(BCC_CD79b_Hscore_class) %>%
+    dplyr::select(LME) %>%
+    table %>%
+    as.data.frame() %>%
+    dplyr::group_by(BCC_CD79b_Hscore_class) 
+
+foo$BCC_CD79b_Hscore_class <- factor(foo$BCC_CD79b_Hscore_class, levels = c("High","Low"))
+foo$LME <- factor(foo$LME, levels = c("Mesenchymal","Depleted","Inflammatory","GC-like"))
+
+foo <- foo %>%
+  dplyr::group_by(LME) %>%
+  mutate(per=round(Freq/sum(Freq)*100))
+
+g2 <- foo %>%
+  ggplot(aes(x =  "", y = per, fill = BCC_CD79b_Hscore_class))+
+  geom_bar(stat = "identity", width=1) + 
+  coord_polar(theta = "y", start = 0)+
+  ylab("")+
+  xlab("LME")+
+  facet_wrap(~LME, ncol = 4) +
+  labs(title = "CD79b_Hscore_class among LME (COO=ALL)") +
+  geom_text(aes(label=paste0(per,"%")),position = position_stack(vjust=0.5))+
+  theme(
+    axis.title.x = element_text(size = 6, face = "bold"),
+    axis.text.x = element_text(size = 5, face = "bold"),
+    axis.title.y = element_text(size = 6, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    plot.title = element_text(size = 5, face = "bold"),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.text = element_text(size = 4.2, face = "bold"),
+    legend.title = element_text(size = 5, face = "bold"),
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.position = "top",
+    legend.key.size = unit(1,"mm"),
+    legend.box.background = element_rect(fill='transparent', colour = NA)
+  ) +
+  scale_fill_manual(values = color_HighLow)
+
+g.LME <- (g1/g2)+plot_layout(heights=c(8,2))
+plot(g.LME)
+```
+
+#scGC cluster
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func03_ShapingData_BCC.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+scGCcluster()
+```
+
+# boxplot of CD79B H-score among scGCcluster
+```{r fig.height=5, fig.width=3, message=FALSE, warning=FALSE}
+library(ggplot2);library(dplyr);library(rstatix);library(ggpubr);library(patchwork)
+
+scGC <- read.csv("./saved/bulkRNAseq/BCC_scGCcluster.csv", row.names = 1)
+
+df <- read.csv("./saved/Scores/BCC_defined_cohort_withUNC.csv")
+res <- summary(df$BCC_CD79b_Hscore)
+df$BCC_CD79b_Hscore_class <- factor(df$BCC_CD79b_Hscore_class, levels = c("Low","High"))
+
+exst <- c("JEMsupp_scGC_Class", "JEMsupp_scGC_Score", "JEMsupp_scGC_Group", "JEMsupp_scGC_Class_Simple")
+df <- left_join(df, scGC[,c("Patient_ID",exst)], by = "Patient_ID")
+
+# boxplot (COO=ALL)
+xy <- reshape2::melt(df[,c("JEMsupp_scGC_Class_Simple", "BCC_CD79b_Hscore")])
+xy <- na.omit(xy)
+color_scGC <- c("#fedc97", #DZ-like
+                "#b5b682", #INT-like
+                "#7c9885", #LZ-like
+                "#28666e", #PBL-like
+                "#033f63" #PreM-like
+                )
+xy$JEMsupp_scGC_Class_Simple <- factor(xy$JEMsupp_scGC_Class_Simple,
+                                       levels = c("DZ-like","INT-like","LZ-like","PBL-like","PreM-like"))
+
+res.kruskal <- xy %>% kruskal_test(value ~ JEMsupp_scGC_Class_Simple)
+stat.test <-  xy  %>% dunn_test(value ~ JEMsupp_scGC_Class_Simple) %>%
+  adjust_pvalue(method = "BH") %>% add_significance()
+print(stat.test)
+stat.test <- stat.test %>% mutate(y.position = 300)
+bxp <- ggboxplot(
+  xy, x = "JEMsupp_scGC_Class_Simple", 
+  y = "value", 
+  fill = "JEMsupp_scGC_Class_Simple",
+  outlier.shape = T)
+
+g1 <- bxp+ 
+  stat_pvalue_manual(stat.test, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(stat.test))+
+  ylab("CD79B Hscore")+
+  xlab("scGCcluster")+
+  labs(title = "COO=ALL") +
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_scGC)
+
+# bar plot
+foo <- df %>%
+    dplyr::group_by(BCC_CD79b_Hscore_class) %>%
+    dplyr::select(JEMsupp_scGC_Class_Simple) %>%
+    table %>%
+    as.data.frame() %>%
+    dplyr::group_by(BCC_CD79b_Hscore_class) 
+
+foo$BCC_CD79b_Hscore_class <- factor(foo$BCC_CD79b_Hscore_class, levels = c("High","Low"))
+
+foo <- foo %>%
+  dplyr::group_by(JEMsupp_scGC_Class_Simple) %>%
+  mutate(per=round(Freq/sum(Freq)*100))
+
+g2 <- foo %>%
+  ggplot(aes(x =  "", y = per, fill = BCC_CD79b_Hscore_class))+
+  geom_bar(aes(x = JEMsupp_scGC_Class_Simple), stat = "identity", position = "stack") + 
+  ylab("")+
+  xlab("scGC cluster")+
+  labs(title = "CD79B Hscore class among scGC cluster (COO=ALL)") +
+  theme(
+    axis.title.x = element_text(size = 6, face = "bold"),
+    axis.text.x = element_text(size = 5, face = "bold"),
+    axis.title.y = element_text(size = 6, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    plot.title = element_text(size = 5, face = "bold"),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'), 
+    plot.background = element_rect(fill='transparent', color=NA), 
+    legend.text = element_text(size = 4.2, face = "bold"),
+    legend.title = element_text(size = 5, face = "bold"),
+    legend.background = element_rect(fill='transparent', colour = NA), 
+    legend.position = "top",
+    legend.key.size = unit(1,"mm"),
+    legend.box.background = element_rect(fill='transparent', colour = NA)
+  ) +
+  scale_fill_manual(values = color_HighLow)
+
+g.scGC <- (g1/g2)+plot_layout(heights=c(8,2))
+print(g.scGC)
+
+# ggsave("./saved/figs/BCC/CD79B_Hscore_pie(scGC_COO=ALL).pdf",
+#        plot = g, width = 4.5, height = 6)
+```
+
+# patchwork
+```{r fig.height=10, fig.width=8, message=FALSE, warning=FALSE}
+g1 <- (g.box.coo/g.pie.coo)+plot_layout(heights=c(9,1))
+g2 <- (g.box.hans/g.pie.hans)+plot_layout(heights=c(9,1))
+g3 <- ( (g.mut.all|g.LG2.all) / (g.mut.abc|g.LG2.abc) )
+
+g.01 <- ((g1|g2)|g3)+plot_layout(widths=c(6,4.5,8))
+print(g.01)
+
+ggsave("./saved/figs/BCC/Fig2-1.pdf", plot = g.01, width = 8, height = 4)
+
+g.LME.re <- {g.LME|plot_spacer()} +plot_layout(widths=c(1,2))
+g.scGC.re <- {g.scGC|plot_spacer()} +plot_layout(widths=c(1, 0.85))
+g.02 <-   g.LME.re /  g.scGC.re
+print(g.02)
+
+ggsave("./saved/figs/BCC/Fig2-2.pdf", plot = g.02, width = 6, height = 8)
+```
+
+#Sessioninfo
+```{r message=FALSE, warning=FALSE}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

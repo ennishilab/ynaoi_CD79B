@@ -1,0 +1,66 @@
+---
+title: "Main_Part01_20240422_DataShaping"
+author: "Yusuke Naoi"
+date: "2024-04-22"
+output: html_document
+---
+
+#Description 
+- In this file, we perform shaping raw outputs from QuPath. 
+- Basically, QuPath generate measurenment files with DAB intensity (0-3). 
+- For sample comparisons, we calculate H-score using these QuPath outputs as follows: H-score = 0*(%score0) + 1*(%score1) + 2*(%score2) + 3*(%score3) 
+- So, H-score is from 0 to 300. 
+- QuPath output also has a usefull parameter called "detection probability". If detection parameter is too low, it means that the cell is likely to be an artifact. We used 0.05 for cutoff. 
+- Tumor content is defined by pan-B-cell markers (CD20, CD79A) using 20% as cutoff.
+
+#Set Working Directory To Project Directory
+```{r}
+cwd <- "path_to_project_directory"
+setwd(cwd)
+getwd()
+
+set.seed(2024)
+```
+
+#Load function (IHC_score_calculator)
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func01_IHC_score_calculator.R", envir = .myfunc.env )
+attach( .myfunc.env )
+```
+
+#Calculate CD79B IHC scores (current study cohort) 
+- Caution: This step takes a while
+```{r message=FALSE, warning=FALSE}
+Calculate_Scores(target = "OKU_CD79b", pattern = "detect", Detect.prob = 0.05, multicore=32, cohort = "OKU")
+Arrange_Files(target = "OKU_CD79b", minimum_counts=750, cohort = "OKU")
+```
+#Calculate CD79A IHC scores (current study cohort) 
+- Caution: This step takes a while
+```{r message=FALSE, warning=FALSE}
+Calculate_Scores(target = "OKU_CD79a", pattern = "detect", Detect.prob = 0.05, multicore=32, cohort = "OKU")
+Arrange_Files(target = "OKU_CD79a", minimum_counts=750, cohort = "OKU")
+```
+#Calculate CD20 IHC scores (current study cohort) 
+- Caution: This step takes a while
+```{r message=FALSE, warning=FALSE}
+Calculate_Scores(target = "OKU_CD20", pattern = "detect", Detect.prob = 0.05, multicore=32, cohort = "OKU")
+Arrange_Files(target = "OKU_CD20", minimum_counts=750, cohort = "OKU")
+```
+#Calculate CD79B IHC scores (BCC cohort)
+- Caution: This step takes a while
+```{r message=FALSE, warning=FALSE}
+Calculate_Scores(target = "BCC_CD79b", pattern = "detect", Detect.prob = 0.05, multicore=32, cohort = "BCC")
+Arrange_Files(target = "BCC_CD79b", minimum_counts=750, cohort = "BCC")
+```
+
+#Combine Metadata
+```{r message=FALSE, warning=FALSE}
+Combine_metadata(cohort="OKU")
+Combine_metadata(cohort="BCC")
+```
+
+#Sessioninfo
+```{r message=FALSE, warning=FALSE}
+sessionInfo()
+```

@@ -1,0 +1,553 @@
+---
+title: "Single Cell Analysis"
+author: "Yusuke Naoi"
+date: "2024-04-23"
+output: html_document
+---
+
+#Descripton
+- In this file, we analyze single-cell data using Seurat package (v5.0.1).
+- We performed CITEseq experiment on reactive lymph node(RLN) from non-malignant patients (n=2).
+- We also analyzed public datasets.
+
+#Set Working Directory To Project Directory!!!
+```{r message=FALSE, warning=FALSE}
+cwd <- "path_to_project_directory"
+setwd(cwd)
+getwd()
+
+set.seed(2024)
+```
+
+# scGC markers from JEM2020
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func10_HolmesJEM_GCmarkers.R", envir = .myfunc.env )
+attach( .myfunc.env )
+Public_GCmarkers()
+
+markers.GC.UP <- readRDS("./src/scRNAseq/JEM2020/article/markers_UP.rds")
+```
+
+# citeRLN_OKU (UCell score calculation & NMF clustering)
+```{r message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func11_Analyze_SingleCellData_OKU.R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+Analyze_citeRLN_OKU()
+```
+
+# citeRLN_OKU (CD79B expression)
+## Load rds file
+```{r message=FALSE, warning=FALSE}
+sub.obj <- readRDS("./saved/scRNAseq/processed/scRLN_OKU_UCell_NMF_GCclust.rds")
+dim(sub.obj) 
+DefaultAssay(sub.obj) <- "SCT"
+```
+
+## Supervised UMAP
+```{r message=FALSE, warning=FALSE}
+cnt.sct.norm <- FetchData(object = sub.obj,
+                          vars = rownames(sub.obj),
+                          assay = "SCT",
+                          layer = "data"
+)
+
+cnt.sct.norm$index_col <- rownames(cnt.sct.norm)
+data.table::fwrite(cnt.sct.norm, "./saved/scRNAseq/processed/scRLN_OKU_sct-norm-counts.csv")
+
+meta <- sub.obj@meta.data
+data.table::fwrite(meta, "./saved/scRNAseq/processed/scRLN_OKU_metadata.csv")
+```
+
+
+## Perform Supervised UMAP on Python -> save sUMAP coordinations
+```{r fig.height=3, fig.width=9}
+supervised_umap <- read.csv("./saved/scRNAseq/processed/scRLN_OKU_sUMAP_coords.csv")
+#dim(supervised_umap)
+colnames(supervised_umap)[1] <- "id"
+
+umap_res <- sub.obj@reductions[["umap"]]@cell.embeddings
+umap_res <- data.frame(umap_res)
+umap_res$id <- rownames(umap_res)
+
+nrow(umap_res) == nrow(supervised_umap) # [1] TRUE
+
+sumap <- left_join(umap_res, supervised_umap, by = "id")
+rownames(sumap) <- sumap$id
+sumap <- sumap[,c("sUMAP_1", "sUMAP_2")]
+
+sub.obj@reductions[["supervised.umap"]] <- sub.obj@reductions[["umap"]]
+sub.obj@reductions[["supervised.umap"]]@cell.embeddings <- as.matrix(sumap)
+sub.obj@reductions[["supervised.umap"]]@key <- "sUMAP_"
+
+orders <- c("INTa","DZb","DZa/DZc/INTb","PreM/INTd","INTc/INTe","LZa/LZb","PBLa/PBLb")
+sub.obj$GC_cluster <- factor(sub.obj$GC_cluster, levels = orders)
+
+color_RefscGC <-
+  c("#2ca02c", # INTa
+    "#ff7f0e", # DZb
+    "#d62728", # DZa/DZc/INTb,
+    "#1f77b4", # PreM/INTd
+    "#e377c2", # INTc/INTe
+    "#9467bd", # LZa/LZb
+    "#17becf"  # PBLa/PBLb
+  )
+
+d.oku <- DimPlot(sub.obj, label = TRUE, label.size = 7,
+             reduction = "supervised.umap",
+             group.by = "GC_cluster", pt.size = 2.5, raster = TRUE,
+             cols = color_RefscGC
+)
+f.oku.rna <- FeaturePlot(sub.obj, features = "CD79B",
+                     reduction = "supervised.umap", pt.size = 2.5, raster = TRUE) &
+  scale_color_gradientn(colours = c("darkblue","skyblue", "red", "darkred"))
+f.oku.adt <- FeaturePlot(sub.obj, features = "Hu.CD79b",
+                     reduction = "supervised.umap", pt.size = 2.5, raster = TRUE) &
+  scale_color_gradientn(colours = c("darkblue","skyblue", "red", "darkred"))
+
+plot( (d.oku|f.oku.rna|f.oku.adt) )
+# ggsave("./saved/figs/scRNAseq/scRLN_OKU_GCclust_sUMAPs.pdf",
+#        plot = (d.oku|f.oku.rna|f.oku.adt), width = 25, height = 7)
+```
+
+```{r fig.height=11, fig.width=8}
+markers.GC.UP.UCell <- paste0(names(markers.GC.UP), "_UCell")
+f <- FeaturePlot(sub.obj,
+                 reduction = "supervised.umap",
+                 features = markers.GC.UP.UCell,
+                 ncol = 3,
+                 pt.size = 3,
+                 order = T,
+                 raster = T) &
+  scale_color_gradientn(colours = c("darkblue","skyblue", "lightgreen", "red", "darkred", "black"))
+print(f)
+
+ggsave(filename = "./saved/figs/scRNAseq/scRLN_OKU_GC-UCell_Featureplots_sUMAP.pdf",
+       plot = f, width = 16, height = 22)
+
+saveRDS(sub.obj, "./saved/scRNAseq/processed/scRLN_OKU_UCell_NMF_sUMAP.rds")
+```
+
+## Dotplot
+```{r}
+library(tidyverse)
+
+# fetch count data
+bind <- data.frame(matrix(ncol = 2, nrow = 0))
+colnames(bind) <- c("CD79B","Hu.CD79b")
+foo <- FetchData(sub.obj, vars = "CD79B", assay="SCT", slot = "data")
+bind[1:nrow(foo),"CD79B"] <- foo[,"CD79B"]
+rownames(bind) <- rownames(foo)
+foo <- FetchData(sub.obj, vars = "Hu.CD79b", assay="ADT", slot = "data")
+bind[1:nrow(foo),"Hu.CD79b"] <- foo[,"adt_Hu.CD79b"]
+rownames(bind) <- rownames(foo)
+
+meta.sub <- sub.obj@meta.data[,c("orig.ident","GC_cluster")]
+meta.sub$orig.ident <- NULL
+meta.sub$cell_ids <- rownames(meta.sub)
+bind$cell_ids <- rownames(bind)
+bind <- left_join(bind, meta.sub, by="cell_ids")
+rownames(bind) <- bind$cell_ids
+bind$cell_ids <- NULL
+
+medians_wide <- bind %>%
+  dplyr::group_by(GC_cluster) %>%
+  summarise(`CD79B(mRNA)`=median(CD79B), `CD79B(Protein)`=median(Hu.CD79b))
+
+medians_long <- medians_wide %>%
+  pivot_longer(cols = c("CD79B(mRNA)",
+                        "CD79B(Protein)"),
+               names_to = "CountType",
+               values_to = "medianNrmCounts"
+  )
+
+medians_long <- medians_long %>%
+  group_by(CountType) %>%
+  mutate(medianNrmCounts_scaled = scale(medianNrmCounts))
+
+medians_long$CountType <- factor(medians_long$CountType, levels = c("CD79B(Protein)","CD79B(mRNA)"))
+
+p <- ggplot(medians_long,
+            aes(x = reorder(GC_cluster, -medianNrmCounts),
+                y = CountType,
+                size = medianNrmCounts
+            )) +
+  geom_point(aes(colour = medianNrmCounts_scaled)) +
+  scale_color_gradient2(high = "red", mid = "lightblue", low = "blue", midpoint = -0.5) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p -> dot.oku
+
+ggsave("./saved/figs/scRNAseq/scRLN_OKU_GCclust_CD79B_DotPlot.pdf",
+       plot = dot.oku, width = 6, height = 4)
+
+```
+
+## Boxplot
+```{r}
+library(ggplot2);library(ggpubr);library(rstatix)
+
+# fetch count data
+bind <- data.frame(matrix(ncol = 1, nrow = 0))
+colnames(bind) <- "CD79B"
+foo <- FetchData(sub.obj, vars = "CD79B", assay="SCT", slot = "data")
+bind[1:nrow(foo),"CD79B"] <- foo[,"CD79B"]
+rownames(bind) <- rownames(foo)
+
+meta.sub <- sub.obj@meta.data[,c("orig.ident","GC_cluster")]
+meta.sub$orig.ident <- NULL
+meta.sub$cell_ids <- rownames(meta.sub)
+bind$cell_ids <- rownames(bind)
+bind <- left_join(bind, meta.sub, by="cell_ids")
+rownames(bind) <- bind$cell_ids
+bind$cell_ids <- NULL
+
+# Boxplot
+stat_rna <- reshape2::melt(bind[,c("GC_cluster","CD79B")])
+stat_rna$value_scaled <- scale(stat_rna$value)
+res.kruskal.rna <- stat_rna %>% kruskal_test(value ~ GC_cluster)
+stat.test.rna <-  stat_rna  %>%
+  dunn_test(value ~ GC_cluster) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+stat.test.rna <- stat.test.rna %>% mutate(y.position = 2)
+cat("---- RNA ----")
+print(stat.test.rna)
+
+bxp.rna <- ggboxplot(
+  data = stat_rna,
+  x = "GC_cluster",
+  y = "value_scaled",
+  fill = "GC_cluster",
+  outlier.shape = NA, ylim = c(-2,2.5)
+)
+
+g <- bxp.rna +
+  # stat_pvalue_manual(stat.test.rna, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal.rna, detailed = TRUE),
+       caption = get_pwc_label(stat.test.rna))+
+  ylab("CD79B(mRNA)")+
+  xlab("scGC-cluster")+
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'),
+    plot.background = element_rect(fill='transparent', color=NA),
+    legend.background = element_rect(fill='transparent', colour = NA),
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_RefscGC)
+g -> g.oku.box.rna
+print(g.oku.box.rna)
+
+# ggsave("./saved/figs/scRNAseq/Public_RLNs_GCclust_CD79B_Boxplot.pdf", plot = g.rna, width = 6, height = 4)
+```
+
+
+# scRLN_Public (UCell score calculation & NMF clustering)
+```{r fig.height=20, fig.width=16, message=FALSE, warning=FALSE}
+.myfunc.env = new.env()
+sys.source( "./func/Func12_Analyze_SingleCellData_Public(RLN).R", envir = .myfunc.env )
+attach( .myfunc.env )
+
+Analyze_Public_RLNs()
+```
+
+# scRLN_Public: Load rds file
+## retry UMAP
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+
+sub.obj <- readRDS("./saved/scRNAseq/processed/Public_RLNs_UCell_NMF_GCclust.rds")
+dim(sub.obj) 
+DefaultAssay(sub.obj) <- "SCT"
+
+sub.obj <- RunUMAP(sub.obj, dims = 1:50, metric = "euclidean", 
+                   n_neighbors = 50, min.dist = 0.5)
+
+saveRDS(sub.obj, "./saved/scRNAseq/processed/Public_RLNs_UCell_NMF_GCclust.rds")
+```
+
+# scRLN_Public: Load rds file
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+
+sub.obj <- readRDS("./saved/scRNAseq/processed/Public_RLNs_UCell_NMF_GCclust.rds")
+dim(sub.obj) 
+DefaultAssay(sub.obj) <- "SCT"
+```
+
+```{r message=FALSE, warning=FALSE}
+table(sub.obj$orig.ident)
+```
+
+```{r fig.height=7, fig.width=16}
+library(ggplot2)
+
+color_RefscGC <-
+  c("#ff7f0e", # DZb
+    "#2ca02c", # INTa
+    "#d62728", # DZa/DZc/INTb,
+    "#e377c2", # INTc
+    "#e377c2", # INTe
+    "#9467bd", # LZa/LZb
+    "#1f77b4", # PreM/INTd
+    "#17becf" # PBLa/PBLb
+  )
+
+d.pub <- DimPlot(sub.obj, label = TRUE, label.size = 6,
+             reduction = "umap",
+             group.by = "GC_cluster", pt.size = 1.25, raster = TRUE,
+             cols = color_RefscGC
+)
+f.pub.rna <- FeaturePlot(sub.obj, features = "CD79B",
+                     reduction = "umap", pt.size = 1.25, raster = TRUE) & scale_color_gradientn(colours = c("darkblue","skyblue", "lightgreen", "red", "darkred", "black"))
+plot((d.pub|f.pub.rna))
+
+# ggsave("./saved/figs/scRNAseq/scRLN_Public_GCclust_UMAPs.pdf",
+#        plot = (d|f.rna), width = 18, height = 6)
+```
+
+
+## Supervised UMAP
+```{r message=FALSE, warning=FALSE}
+gc()
+cnt.sct.norm <- FetchData(object = sub.obj,
+                          vars = rownames(sub.obj),
+                          assay = "SCT",
+                          layer = "data")
+
+cnt.sct.norm$index_col <- rownames(cnt.sct.norm)
+data.table::fwrite(cnt.sct.norm, "./saved/scRNAseq/processed/scRLN_Public_sct-norm-counts.csv")
+
+meta <- sub.obj@meta.data
+write.csv(meta, "./saved/scRNAseq/processed/scRLN_Public_metadata.csv")
+```
+
+## Perform Supervised UMAP on Python -> save sUMAP coordinations
+```{r fig.height=20, fig.width=16}
+library(ggplot2)
+
+supervised_umap <- read.csv("./saved/scRNAseq/processed/scRLN_Public_sUMAP_coords.csv")
+#dim(supervised_umap)
+colnames(supervised_umap)[1] <- "id"
+
+umap_res <- sub.obj@reductions[["umap"]]@cell.embeddings
+umap_res <- data.frame(umap_res)
+umap_res$id <- rownames(umap_res)
+
+nrow(umap_res) == nrow(supervised_umap) # [1] TRUE
+
+sumap <- left_join(umap_res, supervised_umap, by = "id")
+rownames(sumap) <- sumap$id
+sumap <- sumap[,c("sUMAP_1", "sUMAP_2")]
+
+sub.obj@reductions[["supervised.umap"]] <- sub.obj@reductions[["umap"]]
+sub.obj@reductions[["supervised.umap"]]@cell.embeddings <- as.matrix(sumap)
+sub.obj@reductions[["supervised.umap"]]@key <- "sUMAP_"
+
+#orders <- c("INTa","DZb","DZa/DZc/INTb","PreM/INTd","INTc/INTe","LZa/LZb","PBLa/PBLb")
+#sub.obj$GC_cluster <- factor(sub.obj$GC_cluster, levels = orders)
+
+color_RefscGC <-
+  c("#ff7f0e", # DZb
+    "#2ca02c", # INTa
+    "#d62728", # DZa/DZc/INTb,
+    "#e377c2", # INTc
+    "#e377c2", # INTe
+    "#9467bd", # LZa/LZb
+    "#1f77b4", # PreM/INTd
+    "#17becf" # PBLa/PBLb
+  )
+
+d <- DimPlot(sub.obj, label = TRUE, label.size = 7,
+             reduction = "supervised.umap",
+             group.by = "GC_cluster", pt.size = 1, raster = TRUE,
+             cols = color_RefscGC
+)
+f.rna <- FeaturePlot(sub.obj, features = "CD79B",
+                     reduction = "supervised.umap", pt.size = 1, raster = TRUE) &
+  scale_color_gradientn(colours = c("darkblue","skyblue", "lightgreen", "red", "darkred", "black"))
+plot((d|f.rna))
+
+# ggsave("./saved/figs/scRNAseq/scRLN_Public_GCclust_sUMAPs.pdf",
+#        plot = (d|f.rna), width = 16, height = 7)
+```
+
+```{r message=FALSE, warning=FALSE}
+markers.GC.UP.UCell <- paste0(names(markers.GC.UP), "_UCell")
+f <- FeaturePlot(sub.obj,
+                 reduction = "supervised.umap",
+                 features = markers.GC.UP.UCell,
+                 ncol = 3,
+                 pt.size = 3,
+                 order = T,
+                 raster = T) &
+  scale_color_gradientn(colours = c("darkblue","skyblue", "lightgreen", "red", "darkred", "black"))
+print(f)
+
+ggsave(filename = "./saved/figs/scRNAseq/scRLN_OKU_GC-UCell_Featureplots_sUMAP.pdf",
+       plot = f, width = 16, height = 20)
+
+saveRDS(sub.obj, "./saved/scRNAseq/processed/scRLN_OKU_UCell_NMF_sUMAP.rds")
+```
+
+# scRLN_Public: Save UCell FeaturePlot
+```{r fig.height=20, fig.width=16, message=FALSE, warning=FALSE}
+gc()
+library(Seurat)
+
+markers.GC.UP.UCell <- paste0(names(markers.GC.UP), "_UCell")
+f <- FeaturePlot(sub.obj, 
+                 reduction = "umap", 
+                 features = markers.GC.UP.UCell, 
+                 ncol = 3, 
+                 pt.size = 3,
+                 order = T,
+                 raster = T) & 
+      scale_color_gradientn(colours = c("darkblue","skyblue", "lightgreen", "red", "darkred", "black"))
+print(f)
+
+ggsave(filename = "./saved/figs/scRNAseq/Public_RLNs_UCell_Featureplots.pdf",
+       plot = f, width = 16, height = 22)
+```
+
+# scRLN_Public: CD79B expression
+```{r}
+color_RefscGC <-
+  c("#ff7f0e", # DZb
+    "#2ca02c", # INTa
+    "#d62728", # DZa/DZc/INTb,
+    "#e377c2", # INTc
+    "#e377c2", # INTe
+    "#9467bd", # LZa/LZb
+    "#1f77b4", # PreM/INTd
+    "#17becf" # PBLa/PBLb
+  )
+
+d <- DimPlot(sub.obj, label = FALSE, label.size = 6,
+             reduction = "umap",
+             group.by = "GC_cluster", pt.size = 1.25, raster = TRUE,
+             cols = color_RefscGC
+             )
+d -> d.pub
+print(d.pub)
+```
+
+# scRLN_Public: CD79B expression
+```{r}
+library(ggplot2);library(ggpubr);library(rstatix)
+
+# fetch count data
+bind <- data.frame(matrix(ncol = 1, nrow = 0))
+colnames(bind) <- "CD79B"
+foo <- FetchData(sub.obj, vars = "CD79B", assay="SCT", slot = "data")
+bind[1:nrow(foo),"CD79B"] <- foo[,"CD79B"]
+rownames(bind) <- rownames(foo)
+
+meta.sub <- sub.obj@meta.data[,c("orig.ident","GC_cluster")]
+meta.sub$orig.ident <- NULL
+meta.sub$cell_ids <- rownames(meta.sub)
+bind$cell_ids <- rownames(bind)
+bind <- left_join(bind, meta.sub, by="cell_ids")
+rownames(bind) <- bind$cell_ids
+bind$cell_ids <- NULL
+
+# Boxplot
+stat_rna <- reshape2::melt(bind[,c("GC_cluster","CD79B")])
+stat_rna$value_scaled <- scale(stat_rna$value)
+res.kruskal.rna <- stat_rna %>% kruskal_test(value ~ GC_cluster)
+stat.test.rna <-  stat_rna  %>%
+  dunn_test(value ~ GC_cluster) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+stat.test.rna <- stat.test.rna %>% mutate(y.position = 2)
+cat("---- RNA ----")
+print(stat.test.rna)
+
+bxp.rna <- ggboxplot(
+  data = stat_rna,
+  x = "GC_cluster",
+  y = "value_scaled",
+  fill = "GC_cluster",
+  outlier.shape = NA, ylim = c(-2,2.5)
+)
+
+g <- bxp.rna +
+  # stat_pvalue_manual(stat.test.rna, hide.ns = T)+
+  labs(subtitle = get_test_label(res.kruskal.rna, detailed = TRUE),
+       caption = get_pwc_label(stat.test.rna))+
+  ylab("CD79B(mRNA)")+
+  xlab("scGC-cluster")+
+  theme(
+    axis.title.x = element_text(size = 7, face = "bold"),
+    axis.text.x = element_text(size = 4.2, face = "bold"),
+    axis.title.y = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 5, face = "bold"),
+    legend.position = "none",
+    plot.title = element_text(size = 5, face = "bold", hjust = 0.5, vjust = -3),
+    plot.subtitle = element_text(size = 6, face = "bold", hjust = 1),
+    panel.background = element_rect(fill='transparent'),
+    plot.background = element_rect(fill='transparent', color=NA),
+    legend.background = element_rect(fill='transparent', colour = NA),
+    legend.box.background = element_rect(fill='transparent', colour = NA),
+    text = element_text(family = "sans")
+  ) +
+  scale_fill_manual(values = color_RefscGC)
+g -> g.pub.box.rna
+print(g.pub.box.rna)
+
+# ggsave("./saved/figs/scRNAseq/Public_RLNs_GCclust_CD79B_Boxplot.pdf", plot = g.rna, width = 6, height = 4)
+```
+
+
+# patchwork
+```{r fig.height=4.375, fig.width=15, message=FALSE, warning=FALSE}
+library(patchwork)
+
+g1 <- ( d.oku|f.oku.rna|f.oku.adt ) + plot_layout(widths=c(1.5,1.25,1.25))
+print(g1)
+
+ggsave("./saved/figs/scRNAseq/Fig5-1.pdf",
+       plot = g1,
+       width = 15, height = 4.375)
+```
+
+```{r fig.height=4, fig.width=8, message=FALSE, warning=FALSE}
+library(patchwork)
+
+g2 <- (g.oku.box.rna|g.pub.box.rna)
+print(g2)
+
+ggsave("./saved/figs/scRNAseq/Fig5-2.pdf",
+       plot = g2,
+       width = 8, height = 4)
+```
+
+```{r fig.height=5, fig.width=18, message=FALSE, warning=FALSE}
+library(patchwork)
+
+g3 <- (dot.oku|d.pub|f.pub.rna) + plot_layout(heights=c(3,4,4))
+print(g3)
+
+ggsave("./saved/figs/scRNAseq/Fig5-3.pdf",
+       plot = g3,
+       width = 18, height = 5)
+```
+
+#Sessioninfo
+```{r message=FALSE, warning=FALSE}
+sessionInfo()
+```
+
+
+
+
